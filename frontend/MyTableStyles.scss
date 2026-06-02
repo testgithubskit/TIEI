@@ -1,0 +1,109 @@
+
+
+.tabulator {
+  margin: 20px;
+  border-collapse: collapse;
+  width: 100%;
+  margin: 20px;
+  border-radius: 20px; /* Rounded corners */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Soft shadow */
+
+  /* Adjusted column widths */
+  & .tabulator-header .tabulator-col {
+    min-width: 80px;
+  }
+
+  /* Lighter hover effect */
+  & .tabulator-row:hover {
+    background-color: #f5f8fa; /* Lighter grey */
+  }
+
+  /* Add custom styles for different status backgrounds */
+  & .bg-yellow-200 {
+    background-color: #fdf8b2;
+  }
+
+  & .bg-blue-200 {
+    background-color: #bee3f8;
+  }
+
+  & .bg-green-200 {
+    background-color: #c6f6d5;
+  }
+
+  /* Change color theme to emerald */
+  & .tabulator-header {
+    background-color: #2ecc71; /* Emerald color */
+    color: #fff;
+  }
+
+  & .tabulator-row {
+    background-color: #ecf0f1; /* Light grey background for rows */
+  }
+
+  & .tabulator-row.tabulator-even {
+    background-color: #d2dae2; /* Slightly darker grey for even rows */
+  }
+}
+
+.btn {
+  padding: 5px 10px;
+  cursor: pointer;
+  border: none;
+  border-radius: 3px;
+  background-color: #3490dc;
+  color: #fff;
+}
+
+.tabulator {
+  margin: 20px;
+  border-collapse: collapse;
+  width: 100%;
+  margin: 20px;
+  border-radius: 20px; /* Rounded corners */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Soft shadow */
+}
+
+.table-container {
+  margin: 20px;
+  border-radius: 8px; /* Rounded corners */
+  background-color: #090707; /* White background */
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); /* Soft shadow */
+}
+
+/* Adjusted column widths */
+.tabulator .tabulator-header .tabulator-col {
+  min-width: 80px;
+}
+
+/* Lighter hover effect */
+.tabulator .tabulator-row:hover {
+  background-color: #f5f8fa; /* Lighter grey */
+}
+
+/* Add custom styles for different status backgrounds */
+.bg-yellow-200 {
+  background-color: #fdf8b2;
+}
+
+.bg-blue-200 {
+  background-color: #bee3f8;
+}
+
+.bg-green-200 {
+  background-color: #c6f6d5;
+}
+
+/* Change color theme to emerald */
+.tabulator .tabulator-header {
+  background-color: #2ecc71; /* Emerald color */
+  color: #fff;
+}
+
+.tabulator .tabulator-row {
+  background-color: #ecf0f1; /* Light grey background for rows */
+}
+
+.tabulator .tabulator-row.tabulator-even {
+  background-color: #d2dae2; /* Slightly darker grey for even rows */
+}
