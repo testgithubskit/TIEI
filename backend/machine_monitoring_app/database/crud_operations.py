@@ -152,12 +152,12 @@ def get_real_time_parameters_data():
     # Iterate over unique parameter groups
     for group_name, group_data in result_df.groupby('group_name'):
         group_json = {'group_name': group_name, 'group_details': [], 'group_state': 'OK',
-                      'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0}}
+                      'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
 
         # Iterate over unique locations within the parameter group
         for location, location_data in group_data.groupby('location'):
             location_json = {'line_name': location, 'machines': [], 'line_state': 'OK',
-                             'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0}}
+                             'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
             # Iterate over unique machines within the location
             for machine_name, machine_data in location_data.groupby('machine_name', sort=False):
                 machine_json = {'machine_name': machine_name, 'parameters': [], 'machine_state': 'OK'}
@@ -194,19 +194,37 @@ def get_real_time_parameters_data():
                         machine_count['CRITICAL'] += 1
 
                 # Determine machine state and line count based on machine's counts
-                if machine_count['CRITICAL'] > 0:
-                    machine_json['machine_state'] = 'CRITICAL'
+                # First check machine-level disconnection status from cycle_time_limits table
+                machine_obj = Machine.get(name=machine_name)
+                machine_disconnected = False
+                
+                if machine_obj:
+                    cycle_time_limits = CycleTimeLimits.get(machine=machine_obj)
+                    if cycle_time_limits:
+                        # Check machine-level status
+                        if cycle_time_limits.status == 'DISCONNECTED':
+                            machine_json['machine_state'] = 'DISCONNECTED'
+                            location_json['count']['DISCONNECTED'] += 1
+                            machine_disconnected = True
+                        elif cycle_time_limits.status == 'ACTIVE':
+                            # Skip special purpose machines - don't count them
+                            machine_disconnected = True  # Mark as processed to skip parameter-level logic
+                
+                # If not machine-level disconnected, use parameter-level logic
+                if not machine_disconnected:
+                    if machine_count['CRITICAL'] > 0:
+                        machine_json['machine_state'] = 'CRITICAL'
 
-                    # Increment the location's critical count also
-                    location_json['count']['CRITICAL'] += 1
-                elif machine_count['WARNING'] > 0:
-                    machine_json['machine_state'] = 'WARNING'
+                        # Increment the location's critical count also
+                        location_json['count']['CRITICAL'] += 1
+                    elif machine_count['WARNING'] > 0:
+                        machine_json['machine_state'] = 'WARNING'
 
-                    # Increment the location's warning count also
-                    location_json['count']['WARNING'] += 1
-                else:
-                    # Increment the location's ok count also
-                    location_json['count']['OK'] += 1
+                        # Increment the location's warning count also
+                        location_json['count']['WARNING'] += 1
+                    else:
+                        # Increment the location's ok count also
+                        location_json['count']['OK'] += 1
 
                 location_json['machines'].append(machine_json)
 
@@ -220,6 +238,7 @@ def get_real_time_parameters_data():
             group_json['count']['OK'] += location_json['count']['OK']
             group_json['count']['WARNING'] += location_json['count']['WARNING']
             group_json['count']['CRITICAL'] += location_json['count']['CRITICAL']
+            group_json['count']['DISCONNECTED'] += location_json['count']['DISCONNECTED']
 
             group_json['group_details'].append(location_json)
 
@@ -1142,12 +1161,12 @@ def get_real_time_parameters_data_by_group(group_name):
     result_df = pd.DataFrame(result, columns=columns)
 
     group_json = {'group_name': group_name, 'group_details': [], 'group_state': 'OK',
-                  'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0}}
+                  'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
 
     # Iterate over unique locations within the parameter group
     for location, location_data in result_df.groupby('location'):
         location_json = {'line_name': location, 'machines': [], 'line_state': 'OK',
-                         'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0}}
+                         'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
         # Iterate over unique machines within the location
         for machine_name, machine_data in location_data.groupby('machine_name'):
             machine_json = {'machine_name': machine_name, 'parameters': [], 'machine_state': 'OK'}
@@ -1184,19 +1203,37 @@ def get_real_time_parameters_data_by_group(group_name):
                     machine_count['CRITICAL'] += 1
 
             # Determine machine state and line count based on machine's counts
-            if machine_count['CRITICAL'] > 0:
-                machine_json['machine_state'] = 'CRITICAL'
+            # First check machine-level disconnection status from cycle_time_limits table
+            machine_obj = Machine.get(name=machine_name)
+            machine_disconnected = False
+            
+            if machine_obj:
+                cycle_time_limits = CycleTimeLimits.get(machine=machine_obj)
+                if cycle_time_limits:
+                    # Check machine-level status
+                    if cycle_time_limits.status == 'DISCONNECTED':
+                        machine_json['machine_state'] = 'DISCONNECTED'
+                        location_json['count']['DISCONNECTED'] += 1
+                        machine_disconnected = True
+                    elif cycle_time_limits.status == 'ACTIVE':
+                        # Skip special purpose machines - don't count them
+                        machine_disconnected = True  # Mark as processed to skip parameter-level logic
+            
+            # If not machine-level disconnected, use parameter-level logic
+            if not machine_disconnected:
+                if machine_count['CRITICAL'] > 0:
+                    machine_json['machine_state'] = 'CRITICAL'
 
-                # Increment the location's critical count also
-                location_json['count']['CRITICAL'] += 1
-            elif machine_count['WARNING'] > 0:
-                machine_json['machine_state'] = 'WARNING'
+                    # Increment the location's critical count also
+                    location_json['count']['CRITICAL'] += 1
+                elif machine_count['WARNING'] > 0:
+                    machine_json['machine_state'] = 'WARNING'
 
-                # Increment the location's warning count also
-                location_json['count']['WARNING'] += 1
-            else:
-                # Increment the location's ok count also
-                location_json['count']['OK'] += 1
+                    # Increment the location's warning count also
+                    location_json['count']['WARNING'] += 1
+                else:
+                    # Increment the location's ok count also
+                    location_json['count']['OK'] += 1
 
             location_json['machines'].append(machine_json)
 
@@ -1210,6 +1247,7 @@ def get_real_time_parameters_data_by_group(group_name):
         group_json['count']['OK'] += location_json['count']['OK']
         group_json['count']['WARNING'] += location_json['count']['WARNING']
         group_json['count']['CRITICAL'] += location_json['count']['CRITICAL']
+        group_json['count']['DISCONNECTED'] += location_json['count']['DISCONNECTED']
 
         group_json['group_details'].append(location_json)
 
@@ -1601,19 +1639,37 @@ def get_machine_states_2(group_name):
                     machine_count['DISCONNECTED'] += 1
 
             # Determine machine state and line count based on machine's counts
-            if machine_count['DISCONNECTED'] == len(machine_json['parameters']):
-                machine_json[
-                    'machine_state'] = 'DISCONNECTED'  # Set machine_state to 'DISCONNECTED' if all parameters are disconnected
-                location_json['count'][
-                    'DISCONNECTED'] += 1  # Increment count of machines with all parameters disconnected
-            elif machine_count['CRITICAL'] > 0:
-                machine_json['machine_state'] = 'CRITICAL'
-                location_json['count']['CRITICAL'] += 1
-            elif machine_count['WARNING'] > 0:
-                machine_json['machine_state'] = 'WARNING'
-                location_json['count']['WARNING'] += 1
-            else:
-                location_json['count']['OK'] += 1
+            # First check machine-level disconnection status from cycle_time_limits table
+            machine_obj = Machine.get(name=machine_name)
+            machine_disconnected = False
+            
+            if machine_obj:
+                cycle_time_limits = CycleTimeLimits.get(machine=machine_obj)
+                if cycle_time_limits:
+                    # Check machine-level status
+                    if cycle_time_limits.status == 'DISCONNECTED':
+                        machine_json['machine_state'] = 'DISCONNECTED'
+                        location_json['count']['DISCONNECTED'] += 1
+                        machine_disconnected = True
+                    elif cycle_time_limits.status == 'ACTIVE':
+                        # Skip special purpose machines - don't count them
+                        machine_disconnected = True  # Mark as processed to skip parameter-level logic
+            
+            # If not machine-level disconnected, use parameter-level logic
+            if not machine_disconnected:
+                if machine_count['DISCONNECTED'] == len(machine_json['parameters']):
+                    machine_json[
+                        'machine_state'] = 'DISCONNECTED'  # Set machine_state to 'DISCONNECTED' if all parameters are disconnected
+                    location_json['count'][
+                        'DISCONNECTED'] += 1  # Increment count of machines with all parameters disconnected
+                elif machine_count['CRITICAL'] > 0:
+                    machine_json['machine_state'] = 'CRITICAL'
+                    location_json['count']['CRITICAL'] += 1
+                elif machine_count['WARNING'] > 0:
+                    machine_json['machine_state'] = 'WARNING'
+                    location_json['count']['WARNING'] += 1
+                else:
+                    location_json['count']['OK'] += 1
 
             location_json['machines'].append(machine_json)
 
@@ -6047,14 +6103,14 @@ def get_real_time_parameters_data_mtlinki_new_layout():
     # Iterate over unique locations
     for location, location_data in result_df.groupby('location'):
         location_json = {'line_name': location, 'machines': [], 'line_state': 'OK',
-                         'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0}}
+                         'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
         # Iterate over unique machines within the location
         for machine_name, machine_data in location_data.groupby('machine_name', sort=False):
             machine_json = {'machine_name': machine_name, 'parameters': [], 'machine_state': 'OK',
-                            'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0}}
+                            'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
 
             # Initialize counts for the machine
-            machine_count = {'OK': 0, 'WARNING': 0, 'CRITICAL': 0}
+            machine_count = {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}
 
             # Iterate over parameter data for the machine
             for _, row in machine_data.iterrows():
@@ -6087,17 +6143,35 @@ def get_real_time_parameters_data_mtlinki_new_layout():
                     machine_count['CRITICAL'] += 1
 
             # Determine machine state and line count based on machine's counts
-            if machine_count['CRITICAL'] > 0:
-                machine_json['machine_state'] = 'CRITICAL'
-                # Increment the location's critical count also
-                location_json['count']['CRITICAL'] += 1
-            elif machine_count['WARNING'] > 0:
-                machine_json['machine_state'] = 'WARNING'
-                # Increment the location's warning count also
-                location_json['count']['WARNING'] += 1
-            else:
-                # Increment the location's ok count also
-                location_json['count']['OK'] += 1
+            # First check machine-level disconnection status from cycle_time_limits table
+            machine_obj = Machine.get(name=machine_name)
+            machine_disconnected = False
+            
+            if machine_obj:
+                cycle_time_limits = CycleTimeLimits.get(machine=machine_obj)
+                if cycle_time_limits:
+                    # Check machine-level status
+                    if cycle_time_limits.status == 'DISCONNECTED':
+                        machine_json['machine_state'] = 'DISCONNECTED'
+                        location_json['count']['DISCONNECTED'] += 1
+                        machine_disconnected = True
+                    elif cycle_time_limits.status == 'ACTIVE':
+                        # Skip special purpose machines - don't count them
+                        machine_disconnected = True  # Mark as processed to skip parameter-level logic
+            
+            # If not machine-level disconnected, use parameter-level logic
+            if not machine_disconnected:
+                if machine_count['CRITICAL'] > 0:
+                    machine_json['machine_state'] = 'CRITICAL'
+                    # Increment the location's critical count also
+                    location_json['count']['CRITICAL'] += 1
+                elif machine_count['WARNING'] > 0:
+                    machine_json['machine_state'] = 'WARNING'
+                    # Increment the location's warning count also
+                    location_json['count']['WARNING'] += 1
+                else:
+                    # Increment the location's ok count also
+                    location_json['count']['OK'] += 1
 
             machine_json['count'] = machine_count
             location_json['machines'].append(machine_json)

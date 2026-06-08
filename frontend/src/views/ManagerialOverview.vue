@@ -18,7 +18,7 @@
             </div>
 
             <!-- ── Metric Tiles ── -->
-            <div class="grid grid-cols-4 gap-0 noc-metrics-grid">
+            <div class="grid grid-cols-5 gap-0 noc-metrics-grid">
               <div class="noc-metric-tile noc-metric-total">
                 <div class="noc-metric-value">{{ totalMachines }}</div>
                 <div class="noc-metric-label">TOTAL</div>
@@ -35,6 +35,10 @@
                 <div class="noc-metric-value noc-crit">{{ totalCritical }}</div>
                 <div class="noc-metric-label noc-crit-label">CRITICAL</div>
               </div>
+              <div class="noc-metric-tile noc-metric-disc">
+                <div class="noc-metric-value noc-disc">{{ totalDisconnected }}</div>
+                <div class="noc-metric-label noc-disc-label">DISCONNECTED</div>
+              </div>
             </div>
 
             <!-- ── Status Summary Bar ── -->
@@ -42,7 +46,7 @@
               <div class="noc-status-bar-fill noc-bar-ok"    :style="{ flex: totalOk }"></div>
               <div class="noc-status-bar-fill noc-bar-warn"  :style="{ flex: totalWarning }"></div>
               <div class="noc-status-bar-fill noc-bar-crit"  :style="{ flex: totalCritical }"></div>
-              <div class="noc-status-bar-fill noc-bar-disc"  :style="{ flex: Math.max(0, totalMachines - totalOk - totalWarning - totalCritical) }"></div>
+              <div class="noc-status-bar-fill noc-bar-disc"  :style="{ flex: totalDisconnected }"></div>
             </div>
           </div>
 
@@ -52,7 +56,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
             </svg>
             ACTIVE ALERTS
-            <span class="noc-alert-count">{{ totalWarning + totalCritical }}</span>
+            <span class="noc-alert-count">{{ totalWarning + totalCritical + totalDisconnected }}</span>
           </div>
 
           <div class="noc-filters px-3 py-2 flex gap-2 overflow-x-auto" :class="panelTheme === 'dark' ? 'bg-[#0f1923] border-b border-[#334155]' : 'bg-[#f1f5f9] border-b border-[#e2e8f0]'">
@@ -92,7 +96,11 @@
                 <div v-for="(alert, idx) in line.alerts" :key="idx"
                      @click="logParameterDetails(alert.paramDetails, alert.machineName, alert.group)"
                      class="noc-alert-row cursor-pointer flex items-center p-2.5 transition-all duration-150"
-                     :class="[alert.state === 'CRITICAL' ? 'noc-alert-crit-row' : 'noc-alert-warn-row']">
+                     :class="{
+                       'noc-alert-crit-row': alert.state === 'CRITICAL',
+                       'noc-alert-warn-row': alert.state === 'WARNING',
+                       'noc-alert-disc-row': alert.state === 'DISCONNECTED'
+                     }">
                   
                   <!-- Flex container for alert details -->
                   <div class="flex-1 min-w-0 flex items-center px-1">
@@ -109,7 +117,12 @@
                       {{ alert.displayName }}
                     </div>
                     <!-- Value & Unit -->
-                    <div class="w-[10%] shrink-0 text-right font-black font-mono noc-value-txt" :class="alert.state === 'CRITICAL' ? 'text-red-500' : 'text-amber-500'">
+                    <div class="w-[10%] shrink-0 text-right font-black font-mono noc-value-txt" 
+                         :class="{
+                           'text-red-500': alert.state === 'CRITICAL',
+                           'text-amber-500': alert.state === 'WARNING',
+                           'text-slate-400': alert.state === 'DISCONNECTED'
+                         }">
                       {{ alert.value }}
                     </div>
                   </div>
@@ -311,7 +324,7 @@
 
                   <!-- ── HIGH-CONTRAST TOOLTIP LABEL ── -->
                   <g v-if="shouldShowTooltip(machine)"
-                     :class="{ 'noc-tooltip-bounce': machine.machine_state === 'WARNING' || machine.machine_state === 'CRITICAL' }">
+                     :class="{ 'noc-tooltip-bounce': machine.machine_state === 'WARNING' || machine.machine_state === 'CRITICAL' || machine.machine_state === 'DISCONNECTED' }">
                     <!-- Shadowed Tooltip Path (Sharp corners + bottom arrow tip) -->
                     <path 
                       :d="getTooltipPath(machine)"
@@ -567,12 +580,12 @@ const getPlatformColors = (state) => {
       hasGlow: true
     },
     'DISCONNECTED': {
-      top: dark ? '#475569' : '#e2e8f0',
-      sideLeft: dark ? '#1e293b' : '#94a3b8',
-      sideRight: dark ? '#334155' : '#cbd5e1',
-      stroke: dark ? '#475569' : '#94a3b8',
-      glow: 'transparent',
-      hasGlow: false
+      top: '#3B3B3B',
+      sideLeft: '#2B2B2B',
+      sideRight: '#4B4B4B',
+      stroke: '#3B3B3B',
+      glow: 'rgba(59, 59, 59, 0.5)',
+      hasGlow: true
     }
   };
   return mapping[state] || mapping['DISCONNECTED'];
@@ -594,10 +607,10 @@ const getBeaconColors = (state) => {
       glow: '#ef4444'
     },
     'DISCONNECTED': {
-      top: '#cbd5e1', // bright grey
-      left: '#64748b', // darker grey
-      right: '#94a3b8', // main grey
-      glow: '#94a3b8'
+      top: '#5B5B5B', // bright grey
+      left: '#3B3B3B', // darker grey
+      right: '#4B4B4B', // main grey
+      glow: '#3B3B3B'
     },
     'OK': {
       top: '#34d399',
@@ -843,6 +856,7 @@ const totalMachines = computed(() => uiLinesData.value.reduce((s, l) => s + (l.m
 const totalOk = computed(() => uiLinesData.value.reduce((s, l) => s + (l.counts.OK || 0), 0));
 const totalWarning = computed(() => uiLinesData.value.reduce((s, l) => s + (l.counts.WARNING || 0), 0));
 const totalCritical = computed(() => uiLinesData.value.reduce((s, l) => s + (l.counts.CRITICAL || 0), 0));
+const totalDisconnected = computed(() => uiLinesData.value.reduce((s, l) => s + (l.counts.DISCONNECTED || 0), 0));
 
 // ── Alert Panel Computed ──
 const availableLines = computed(() => {
@@ -853,8 +867,21 @@ const allAlerts = computed(() => {
   const alerts = [];
   uiLinesData.value.forEach(line => {
     (line.machines || []).forEach(m => {
+      // If machine is DISCONNECTED at machine level, add it to alerts
+      if (m.machine_state === 'DISCONNECTED') {
+        alerts.push({
+          machineName: m.machine_name,
+          lineName: m.lineName || line.name,
+          group: 'MACHINE STATUS',
+          displayName: 'DISC',
+          value: 'N/A',
+          state: 'DISCONNECTED',
+          paramDetails: { parameter_state: 'DISCONNECTED', machine_state: 'DISCONNECTED' }
+        });
+      }
+      // Check individual parameters for WARNING/CRITICAL
       (m.parameters || []).forEach(p => {
-        if (p.parameter_state !== 'OK') {
+        if (p.parameter_state === 'WARNING' || p.parameter_state === 'CRITICAL') {
           alerts.push({
             machineName: m.machine_name,
             lineName: m.lineName || line.name,
@@ -862,17 +889,19 @@ const allAlerts = computed(() => {
             displayName: p.display_name || p.actual_parameter_name,
             value: p.parameter_value !== null ? p.parameter_value : 'N/A',
             state: p.parameter_state,
-            paramDetails: p 
+            paramDetails: p
           });
         }
       });
     });
   });
 
-  // Sort by state (CRITICAL first, then WARNING), then by machine name
+  // Sort by state (CRITICAL first, then WARNING, then DISCONNECTED), then by machine name
   alerts.sort((a, b) => {
-    if (a.state === 'CRITICAL' && b.state !== 'CRITICAL') return -1;
-    if (a.state !== 'CRITICAL' && b.state === 'CRITICAL') return 1;
+    const statePriority = { 'CRITICAL': 0, 'WARNING': 1, 'DISCONNECTED': 2 };
+    const priorityA = statePriority[a.state] ?? 3;
+    const priorityB = statePriority[b.state] ?? 3;
+    if (priorityA !== priorityB) return priorityA - priorityB;
     return a.machineName.localeCompare(b.machineName);
   });
 
@@ -1001,7 +1030,7 @@ const getTooltipWidth = (text) => {
 
 const shouldShowTooltip = (machine) => {
   if (isLoading.value) return false;
-  if (machine.machine_state === 'WARNING' || machine.machine_state === 'CRITICAL') return true;
+  if (machine.machine_state === 'WARNING' || machine.machine_state === 'CRITICAL' || machine.machine_state === 'DISCONNECTED') return true;
   return hoveredMachine.value === machine.machine_name;
 };
 
@@ -1031,14 +1060,14 @@ const getTooltipStroke = (machine) => {
   const state = machine.machine_state;
   if (state === 'CRITICAL') return '#ef4444';
   if (state === 'WARNING') return '#f59e0b';
-  if (state === 'DISCONNECTED') return '#94a3b8';
+  if (state === 'DISCONNECTED') return '#3B3B3B';
   return 'rgba(148, 163, 184, 0.3)';
 };
 const getTooltipTextColor = (machine) => {
   const state = machine.machine_state;
   if (state === 'CRITICAL') return '#ff6b6b';
   if (state === 'WARNING') return '#fbbf24';
-  if (state === 'DISCONNECTED') return '#94a3b8';
+  if (state === 'DISCONNECTED') return '#9CA3AF';
   return '#ffffff';
 };
 
@@ -1475,6 +1504,13 @@ onMounted(async () => {
 .noc-dark .noc-alert-warn-row:hover {
   background: rgba(245, 158, 11, 0.13);
 }
+.noc-dark .noc-alert-disc-row {
+  border-left-color: #94a3b8;
+  background: rgba(148, 163, 184, 0.08);
+}
+.noc-dark .noc-alert-disc-row:hover {
+  background: rgba(148, 163, 184, 0.16);
+}
 
 /* ── LIGHT THEME STYLING ── */
 .noc-light .noc-line-sect-header {
@@ -1533,6 +1569,13 @@ onMounted(async () => {
 }
 .noc-light .noc-alert-warn-row:hover {
   background: rgba(245, 158, 11, 0.08);
+}
+.noc-light .noc-alert-disc-row {
+  border-left-color: #64748b;
+  background: rgba(100, 116, 139, 0.05);
+}
+.noc-light .noc-alert-disc-row:hover {
+  background: rgba(100, 116, 139, 0.1);
 }
 
 /* ── Filters ── */
@@ -2147,3 +2190,5 @@ onMounted(async () => {
   border-radius: 4px;
 }
 </style>
+
+

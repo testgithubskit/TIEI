@@ -435,6 +435,7 @@ class CycleTimeLimits(PONY_DATABASE.Entity):
     machine = Required(Machine, column="machine_id")
     warning_limit = Required(float)
     critical_limit = Required(float)
+    status = Optional(str)  # DISCONNECTED, NOT_DISCONNECTED, ACTIVE - already exists in DB
 
 
 def generate_pony_mapping(create_tables=True):
