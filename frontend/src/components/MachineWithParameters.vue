@@ -1,6 +1,8 @@
 <script setup>
-import { computed, watch } from "vue";
+import { computed } from "vue";
 import MachineParameter from "@/components/MachineParameter.vue";
+
+const PRESSURE_MACHINE_NAMES = new Set(['2nd Rough', '4th Finish']);
 
 const props = defineProps({
   machineState: {
@@ -13,32 +15,11 @@ const props = defineProps({
   },
   parameters: {
     type: Array,
-    default:  [
-              {
-                "parameter_state": "normal",
-                "parameter_value": 42,
-                "actual_parameter_name": "temperature",
-                "internal_parameter_name": "temp_1",
-                "display_name": "X",
-                "latest_update_time": 1702356875000
-              },
-              {
-                "parameter_state": "warning",
-                "parameter_value": 15,
-                "actual_parameter_name": "pressure",
-                "internal_parameter_name": "pressure_1",
-                "display_name": "Y",
-                "latest_update_time": 1702356875000
-              },
-              {
-                "parameter_state": "critical",
-                "parameter_value": 78,
-                "actual_parameter_name": "velocity",
-                "internal_parameter_name": "vel_1",
-                "display_name": "Z",
-                "latest_update_time": 1702356875000
-              }
-            ],
+    default: () => [],
+  },
+  isPressureMachine: {
+    type: Boolean,
+    default: false,
   },
   borderSide: {
     type: String,
@@ -50,70 +31,105 @@ const props = defineProps({
   },
 });
 
+function isPressureParameter(parameter) {
+  return parameter?.is_pressure_machine === true
+    || parameter?.actual_parameter_name === 'AIR_PRESSURE';
+}
+
+const isPressureMachineCard = computed(() => {
+  if (props.isPressureMachine === true) {
+    return true;
+  }
+  if (PRESSURE_MACHINE_NAMES.has(props.machineName)) {
+    return true;
+  }
+  return props.parameters?.some((parameter) => isPressureParameter(parameter));
+});
+
+const pressureParameter = computed(() => {
+  return props.parameters?.find((parameter) => isPressureParameter(parameter))
+    || props.parameters?.[0]
+    || null;
+});
+
 const machineBgColor = computed(() => {
   return {
     OK: "bg-emerald-600",
     WARNING: "bg-yellow-600",
     CRITICAL: "bg-red-600",
-    DISCONNECTED:"bg-slate-500",
+    DISCONNECTED: "bg-slate-500",
     info: null,
   }[props.machineState];
 });
 
 const borderClass = computed(() => {
-  return `rounded-lg shadow-lg hover:shadow-md transition-shadow duration-10`;
-});
-
-const borderColor = computed(() => {
-  return {
-    OK: "emerald-600",
-    WARNING: "yellow-600",
-    CRITICAL: "red-600",
-    DISCONNECTED:"bg-slate-500",
-  }[props.machineState];
+  return 'rounded-lg shadow-lg hover:shadow-md transition-shadow duration-10';
 });
 
 const machineWidth = computed(() => {
+  if (isPressureMachineCard.value) {
+    return 'pressure-machine-card';
+  }
+
   const baseWidth = 16;
-  const maxParameters = 6;
   const incrementalWidth = 8;
-
+  const maxParameters = 6;
   const maxWidth = baseWidth + incrementalWidth * maxParameters;
-  const numeberOfParameters = props.parameters.length;
-  const currentWidth = baseWidth + incrementalWidth * numeberOfParameters;
+  const currentWidth = baseWidth + incrementalWidth * props.parameters.length;
   const appropriateWidth = Math.min(maxWidth, currentWidth);
-  const appropriateWidthString = `w-${appropriateWidth}`;
-
-  return appropriateWidthString;
+  return `w-${appropriateWidth}`;
 });
-
-
 
 const emit = defineEmits(['machine-parameter-clicked']);
 
-// Watch for changes in the parameters array
-watch(
-  () => props.parameters,
-  (newParameters) => {
-    // Handle the event emitted by the child component
-  },
-  { deep: true }
-);
-
-// Function to handle the event received from the child component
 const handleMachineParameterClick = (clickedParameter) => {
-  // Perform any necessary actions with the updated parameters
-  let evenData = clickedParameter;
-  evenData.machineName = props.machineName;
-  emit('machine-parameter-clicked', clickedParameter);
+  const matchedParameter = props.parameters.find(
+    (parameter) => parameter.actual_parameter_name === clickedParameter.actualParameterName
+  );
+  emit('machine-parameter-clicked', {
+    ...clickedParameter,
+    machineName: props.machineName,
+    displayName: matchedParameter?.display_name,
+    latest_update_time: matchedParameter?.latest_update_time,
+    latest_update_time_ms: matchedParameter?.latest_update_time_ms,
+    is_pressure_machine: isPressureParameter(matchedParameter),
+  });
+};
+
+const handlePressureMachineClick = () => {
+  const parameter = pressureParameter.value;
+
+  emit('machine-parameter-clicked', {
+    actualParameterName: 'AIR_PRESSURE',
+    internalParameterName: parameter?.internal_parameter_name,
+    machineName: props.machineName,
+    displayName: '',
+    latest_update_time: parameter?.latest_update_time,
+    latest_update_time_ms: parameter?.latest_update_time_ms,
+    is_pressure_machine: true,
+  });
+};
+
+const handleCardClick = () => {
+  if (isPressureMachineCard.value) {
+    handlePressureMachineClick();
+  }
 };
 
 </script>
 
 <template>
-  <div :class="[machineWidth, borderClass]" class="flex flex-col mx-0">
-    <div class="p-4 rounded-t-lg text-white text-center h-5 flex items-center justify-center" :class="machineBgColor">{{ props.machineName }}</div>
-    <div class="flex flex-wrap justify-start">
+  <div
+    :class="[machineWidth, borderClass, 'flex flex-col mx-0', { 'cursor-pointer': isPressureMachineCard }]"
+    @click="handleCardClick"
+  >
+    <div
+      class="p-4 rounded-t-lg text-white text-center h-5 flex items-center justify-center"
+      :class="machineBgColor"
+    >
+      {{ props.machineName }}
+    </div>
+    <div v-if="!isPressureMachineCard" class="flex flex-wrap justify-start">
       <MachineParameter
         v-for="parameter in props.parameters"
         :key="parameter.internal_parameter_name"
@@ -126,5 +142,18 @@ const handleMachineParameterClick = (clickedParameter) => {
         @machine-parameter-clicked="handleMachineParameterClick"
       />
     </div>
+    <div v-else class="flex flex-wrap justify-start min-h-[2.5rem] pressure-machine-card__body" />
   </div>
 </template>
+
+<style scoped>
+/* Match width of a typical 5-axis machine card (e.g. T_B_OP160) */
+.pressure-machine-card {
+  width: 14rem;
+  min-width: 14rem;
+}
+
+.pressure-machine-card__body {
+  min-height: 2.5rem;
+}
+</style>

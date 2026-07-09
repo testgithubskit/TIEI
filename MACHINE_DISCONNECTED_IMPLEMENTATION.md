@@ -84,17 +84,6 @@ group_json = {'group_name': group_name, 'group_details': [], 'group_state': 'OK'
 # Machine-level check logic same as above...
 ```
 
-#### Function: `get_real_time_parameters_data_mtlinki_new_layout()`
-**File:** `backend/machine_monitoring_app/database/crud_operations.py` (lines 6103-6177)
-
-**Change:** Added machine-level disconnection check and updated count structure to include DISCONNECTED for Managerial Overview endpoint
-```python
-location_json = {'line_name': location, 'machines': [], 'line_state': 'OK',
-                 'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
-
-# Machine-level check logic same as above...
-```
-
 ## Logic Flow
 
 ### Priority Order for Machine State Determination:
@@ -136,60 +125,15 @@ location_json = {'line_name': location, 'machines': [], 'line_state': 'OK',
    - Some with ACTIVE status
    - Verify total counts are accurate
 
-## Frontend Changes
+## Frontend Impact
 
-### 1. Managerial Overview Component (ManagerialOverview.vue)
-**File:** `frontend/src/views/ManagerialOverview.vue`
-
-**Changes:**
-
-#### A. Alert Feed Enhancement (lines 866-915)
-- Updated `allAlerts` computed property to include DISCONNECTED machines
-- Machines with `machine_state === 'DISCONNECTED'` are now added to the alert feed
-- Displayed with group: 'MACHINE STATUS', displayName: 'DISC', value: 'N/A'
-- Sorting updated to prioritize: CRITICAL > WARNING > DISCONNECTED
-
-#### B. Alert Count Update (line 59)
-- Changed alert count from `totalWarning + totalCritical` to `totalWarning + totalCritical + totalDisconnected`
-
-#### C. Status Bar Fix (line 49)
-- Changed from calculated value to use `totalDisconnected` computed property
-
-#### D. Computed Property Addition (line 859)
-- Added `totalDisconnected` computed property to calculate disconnected machine count
-
-#### E. Alert Row Styling (lines 99-103)
-- Updated class binding to handle DISCONNECTED state with `noc-alert-disc-row`
-
-#### F. CSS Styling Added
-- Dark theme DISCONNECTED alert rows (lines 1502-1508): Slate gray background with hover effect
-- Light theme DISCONNECTED alert rows (lines 1568-1574): Slate gray background with hover effect
-
-#### G. Value Text Color (lines 120-127)
-- Added slate-400 color for DISCONNECTED state in alert values
-
-#### H. Machine View Enhancements
-- Auto-show tooltip for DISCONNECTED machines (line 1033)
-- Added bounce animation for DISCONNECTED machines (line 327)
-- Added glow effect for DISCONNECTED machines (lines 582-589)
-- Platform colors: #3B3B3B (dark gray) for DISCONNECTED state
-- Beacon colors: #3B3B3B theme for DISCONNECTED state
-- Tooltip stroke: #3B3B3B for DISCONNECTED state
-- Tooltip text color: #9CA3AF for DISCONNECTED state
-
-### 2. Factory Poll Overview (FactoryPollOverview.vue)
-**File:** `frontend/src/views/FactoryPollOverview.vue`
-
-**Changes:**
-- No changes required - automatically picks up DISCONNECTED counts from updated API responses
-- The count structure already supports DISCONNECTED
+The frontend (`FactoryPollOverview.vue`) should automatically pick up the DISCONNECTED counts from the updated API responses. No frontend changes are required as the count structure already supports DISCONNECTED.
 
 ## API Endpoints Affected
 
 1. `/api/v1/factory/layout` - Uses `get_real_time_parameters_data()`
 2. `/api/v1/factory-state-mtlinki-test/{parameterGroupName}` - Uses `get_machine_states_2()`
-3. `/api/v1/factory/new_layout_mtlinki` - Uses `get_real_time_parameters_data_mtlinki_new_layout()` (Managerial Overview)
-4. Internal function `get_real_time_parameters_data_by_group()` - Used by other endpoints
+3. Internal function `get_real_time_parameters_data_by_group()` - Used by other endpoints
 
 ## Notes
 

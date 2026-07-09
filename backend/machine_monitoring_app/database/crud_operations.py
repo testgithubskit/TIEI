@@ -44,7 +44,8 @@ import numpy as np
 from machine_monitoring_app.database.orm import update_operation
 from machine_monitoring_app.database.pony_models import Machine, ParameterGroup, MachineParameter, \
     RealTimeParameter, User as UserPony, SparePart, EmailUser, MachinePartCount, User, RealTimeParameterActive, \
-    MachineProductionTimeline, MachinePartCount, CorrectiveActivity, ActivityHistory, ParameterCondition, UpdateLog, UserAccessLog, CycleTime, CycleTimeLimits
+    MachineProductionTimeline, MachinePartCount, CorrectiveActivity, ActivityHistory, ParameterCondition, UpdateLog, \
+    UserAccessLog, CycleTime, CycleTimeLimits, Unit, schema_name
 
 from machine_monitoring_app.exception_handling.custom_exceptions import NoParameterGroupError, \
     GetParamGroupDBError, GetAllParameterDBError, GetMachineTimelineError
@@ -77,6 +78,405 @@ from machine_monitoring_app.database.db_utils import PONY_DATABASE
 __author__ = "smt18m005@iiitdm.ac.in"
 
 LOGGER = logging.getLogger(__name__)
+
+PRESSURE_PARAMETER_GROUP = "AIR_PRESSURE"
+PRESSURE_PARAMETER_NAME = "AIR_PRESSURE"
+PRESSURE_DISPLAY_NAME = "Air Pressure"
+PRESSURE_LINE_NAME = "BLOCK"
+PRESSURE_MIN_RANGE_SECONDS = 1
+PRESSURE_MAX_RANGE_SECONDS = 3
+PRESSURE_MAX_CHART_POINTS = 120
+PRESSURE_DB_TIMEZONE = pytz.timezone('Asia/Kolkata')
+
+
+def _pressure_dt_to_epoch_ms(created_at):
+    """Treat naive DB timestamps as Asia/Kolkata wall-clock time."""
+    if created_at is None:
+        return 0
+    if created_at.tzinfo is None:
+        created_at = PRESSURE_DB_TIMEZONE.localize(created_at)
+    return int(created_at.timestamp() * 1000)
+
+
+def _epoch_ms_to_pressure_dt(epoch_ms):
+    return datetime.fromtimestamp(epoch_ms / 1000, PRESSURE_DB_TIMEZONE).replace(tzinfo=None)
+
+
+def _format_pressure_sql_timestamp(dt):
+    return dt.strftime('%Y-%m-%d %H:%M:%S.%f')
+
+
+def _format_pressure_ist_datetime(dt):
+    """Format naive DB datetime as IST wall-clock string (matches DB display)."""
+    if dt is None:
+        return None
+    text = _format_pressure_sql_timestamp(dt)
+    if '.' in text:
+        text = text.rstrip('0').rstrip('.')
+    return text
+
+
+def _pressure_sql_time_bounds(start_ms, end_ms):
+    """Build naive IST bounds matching pressure_sensor_data.created_at storage."""
+    start_dt = _epoch_ms_to_pressure_dt(start_ms)
+    end_dt = _epoch_ms_to_pressure_dt(end_ms)
+    # Include the full end second (DB rows often have sub-second microseconds).
+    end_dt = end_dt.replace(microsecond=999999)
+    return start_dt, end_dt
+
+
+def _downsample_pressure_chart_data(chart_data, max_points=PRESSURE_MAX_CHART_POINTS):
+    if len(chart_data) <= max_points:
+        return chart_data
+    step = len(chart_data) / max_points
+    return [chart_data[int(i * step)] for i in range(max_points)]
+
+
+def _build_pressure_chart_data(sensor_rows, start_ms, end_ms):
+    """
+    Return [IST datetime string, pressure_value] spread across the selected filter window.
+    Rows are selected by created_at; values come from DB; x-axis times match startTime/endTime.
+    """
+    rows = [
+        (reading_ts, pressure_value)
+        for reading_ts, pressure_value in sensor_rows
+        if reading_ts is not None
+    ]
+    if not rows:
+        return []
+
+    reading_epochs = [_pressure_dt_to_epoch_ms(ts) for ts, _ in rows]
+    min_reading = min(reading_epochs)
+    max_reading = max(reading_epochs)
+    window_ms = end_ms - start_ms
+    n = len(rows)
+
+    chart_data = []
+    for idx, (reading_ts, pressure_value) in enumerate(rows):
+        if n == 1:
+            ratio = 0.0
+        elif max_reading > min_reading:
+            ratio = (reading_epochs[idx] - min_reading) / (max_reading - min_reading)
+        else:
+            ratio = idx / (n - 1)
+        plotted_ms = start_ms + ratio * window_ms
+        plotted_dt = _epoch_ms_to_pressure_dt(plotted_ms)
+        chart_data.append([_format_pressure_ist_datetime(plotted_dt), pressure_value])
+
+    return _downsample_pressure_chart_data(chart_data)
+
+
+def parse_pressure_time_param(value) -> float:
+    """
+    Parse pressure timeline bounds from epoch milliseconds or IST datetime text.
+    Examples: 1782812286622, '2026-06-30 15:08:06'
+    """
+    if value is None:
+        raise ValueError("Time value is required")
+
+    if isinstance(value, (int, float)):
+        return float(value)
+
+    text = str(value).strip()
+    if not text:
+        raise ValueError("Time value is required")
+
+    try:
+        return float(text)
+    except ValueError:
+        pass
+
+    normalized = text.replace('T', ' ')
+    for fmt in (
+        "%Y-%m-%d %H:%M:%S.%f",
+        "%Y-%m-%d %H:%M:%S",
+    ):
+        try:
+            parsed_dt = datetime.strptime(normalized, fmt)
+            return PRESSURE_DB_TIMEZONE.localize(parsed_dt).timestamp() * 1000
+        except ValueError:
+            continue
+
+    raise ValueError(
+        "Invalid time format. Use epoch milliseconds or IST datetime "
+        "(YYYY-MM-DD HH:MM:SS), for example: 1782812286622 or 2026-06-30 15:08:06"
+    )
+
+
+def _escape_sql_literal(value: str) -> str:
+    return value.replace("'", "''")
+
+
+def _execute_raw_sql(query, params=None):
+    """Run full SQL via Pony connection (PONY_DATABASE.select() cannot start with SELECT)."""
+    connection = PONY_DATABASE.get_connection()
+    cursor = connection.cursor()
+    try:
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        return cursor.fetchall()
+    finally:
+        cursor.close()
+
+
+def _get_pressure_parameter_state(value, warning_limit, critical_limit):
+    """Pressure machines use only OK / WARNING / CRITICAL based on the latest value."""
+    if value is None:
+        return 'OK'
+    if value >= critical_limit:
+        return 'CRITICAL'
+    if value >= warning_limit:
+        return 'WARNING'
+    return 'OK'
+
+
+def _fetch_pressure_machine_rows():
+    """Latest row per machine: max created_at, then max timestamp within that batch."""
+    query = f"""
+        SELECT pmm.id,
+               pmm.machine_name,
+               pmm.warning_limit,
+               pmm.critical_limit,
+               latest.pressure_value,
+               latest.created_at
+        FROM {schema_name}.pressure_monitoring_machine pmm
+        LEFT JOIN (
+            SELECT DISTINCT ON (machine_id)
+                   machine_id,
+                   pressure_value,
+                   created_at
+            FROM {schema_name}.pressure_sensor_data
+            ORDER BY machine_id, created_at DESC NULLS LAST, "timestamp" DESC NULLS LAST
+        ) latest ON latest.machine_id = pmm.id
+        ORDER BY pmm.id
+    """
+    return _execute_raw_sql(query)
+
+
+def _build_pressure_machine_json(machine_id, machine_name, warning_limit, critical_limit,
+                                 pressure_value, created_at):
+    parameter_state = _get_pressure_parameter_state(
+        pressure_value, warning_limit, critical_limit
+    )
+    latest_update_time_ms = _pressure_dt_to_epoch_ms(created_at)
+    latest_update_time_ist = _format_pressure_ist_datetime(created_at) if created_at else None
+    machine_count = {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}
+    machine_count[parameter_state] = 1
+
+    parameter_json = {
+        'actual_parameter_name': PRESSURE_PARAMETER_NAME,
+        # Air-pressure machines have no axis label (do not show AP / axis chip).
+        'display_name': '',
+        'internal_parameter_name': f'air_pressure_{machine_id}',
+        'latest_update_time': latest_update_time_ist,
+        'latest_update_time_ms': latest_update_time_ms,
+        'parameter_value': pressure_value,
+        'parameter_state': parameter_state,
+        'warning_limit': warning_limit,
+        'critical_limit': critical_limit,
+        'parameter_group': PRESSURE_PARAMETER_GROUP,
+        'parameter_type': 'increasing',
+        'unit_name': None,
+        'unit_short_name': None,
+        'is_pressure_machine': True,
+    }
+
+    return {
+        'machine_name': machine_name,
+        'machine_state': parameter_state,
+        'count': machine_count,
+        'parameters': [parameter_json],
+        'is_pressure_machine': True,
+    }
+
+
+def _merge_pressure_machines_into_lines(lines):
+    pressure_rows = _fetch_pressure_machine_rows()
+    if not pressure_rows:
+        return lines, []
+
+    pressure_machines = []
+    for row in pressure_rows:
+        machine_id, machine_name, warning_limit, critical_limit, pressure_value, created_at = row
+        pressure_machines.append(
+            _build_pressure_machine_json(
+                machine_id, machine_name, warning_limit, critical_limit, pressure_value, created_at
+            )
+        )
+
+    block_line = next((line for line in lines if line.get('line_name') == PRESSURE_LINE_NAME), None)
+    if block_line is None:
+        block_line = {
+            'line_name': PRESSURE_LINE_NAME,
+            'machines': [],
+            'line_state': 'OK',
+            'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0},
+        }
+        lines.append(block_line)
+
+    existing_names = {machine['machine_name'] for machine in block_line.get('machines', [])}
+    added_machines = []
+    for machine_json in pressure_machines:
+        if machine_json['machine_name'] in existing_names:
+            continue
+        block_line['machines'].append(machine_json)
+        state = machine_json['machine_state']
+        if state in block_line['count']:
+            block_line['count'][state] += 1
+        added_machines.append(machine_json)
+
+    if block_line['count']['CRITICAL'] > 0:
+        block_line['line_state'] = 'CRITICAL'
+    elif block_line['count']['WARNING'] > 0:
+        block_line['line_state'] = 'WARNING'
+
+    return lines, added_machines
+
+
+def _merge_pressure_into_group_json(group_json):
+    """Show pressure machines on BLOCK line only; do not change parameter group status."""
+    if group_json.get('group_name') == PRESSURE_PARAMETER_GROUP:
+        return group_json
+
+    group_json['group_details'], added_machines = _merge_pressure_machines_into_lines(
+        group_json.get('group_details', [])
+    )
+    for machine_json in added_machines:
+        state = machine_json['machine_state']
+        if state in group_json['count']:
+            group_json['count'][state] += 1
+
+    return group_json
+
+
+@db_session(optimistic=False)
+def get_pressure_monitoring_group_details():
+    pressure_rows = _fetch_pressure_machine_rows()
+    group_json = {
+        'group_name': PRESSURE_PARAMETER_GROUP,
+        'group_details': [],
+        'group_state': 'OK',
+        'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0},
+    }
+
+    if not pressure_rows:
+        return group_json
+
+    location_json = {
+        'line_name': PRESSURE_LINE_NAME,
+        'machines': [],
+        'line_state': 'OK',
+        'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0},
+    }
+
+    for row in pressure_rows:
+        machine_id, machine_name, warning_limit, critical_limit, pressure_value, created_at = row
+        machine_json = _build_pressure_machine_json(
+            machine_id, machine_name, warning_limit, critical_limit, pressure_value, created_at
+        )
+        location_json['machines'].append(machine_json)
+        state = machine_json['machine_state']
+        if state in location_json['count']:
+            location_json['count'][state] += 1
+
+    if location_json['count']['CRITICAL'] > 0:
+        location_json['line_state'] = 'CRITICAL'
+    elif location_json['count']['WARNING'] > 0:
+        location_json['line_state'] = 'WARNING'
+
+    group_json['group_details'].append(location_json)
+    group_json['count'] = location_json['count'].copy()
+
+    if group_json['count']['CRITICAL'] > 0:
+        group_json['group_state'] = 'CRITICAL'
+    elif group_json['count']['WARNING'] > 0:
+        group_json['group_state'] = 'WARNING'
+
+    return group_json
+
+
+def _get_pressure_group_status_item():
+    group_details = get_pressure_monitoring_group_details()
+    return {
+        'item_name': PRESSURE_PARAMETER_GROUP,
+        'item_state': group_details['group_state'],
+    }
+
+
+@db_session(optimistic=False)
+def get_pressure_machine_timeline(machine_name, start_time, end_time):
+    range_seconds = (end_time - start_time) / 1000
+    if range_seconds < PRESSURE_MIN_RANGE_SECONDS:
+        raise ValueError(
+            f"Time range must be at least {PRESSURE_MIN_RANGE_SECONDS} second(s). "
+            f"Selected range is {range_seconds:.2f} second(s)."
+        )
+    if range_seconds > PRESSURE_MAX_RANGE_SECONDS:
+        raise ValueError(
+            f"Time range cannot exceed {PRESSURE_MAX_RANGE_SECONDS} seconds. "
+            f"Selected range is {range_seconds:.2f} second(s)."
+        )
+
+    machine_name_escaped = _escape_sql_literal(machine_name)
+    machine_query = f"""
+        SELECT id, machine_name, warning_limit, critical_limit
+        FROM {schema_name}.pressure_monitoring_machine
+        WHERE machine_name = '{machine_name_escaped}'
+        LIMIT 1
+    """
+    machine_rows = _execute_raw_sql(machine_query)
+    if not machine_rows:
+        raise ValueError(f"Pressure monitoring machine '{machine_name}' not found")
+
+    machine_id, machine_name_db, warning_limit, critical_limit = machine_rows[0]
+    start_dt, end_dt = _pressure_sql_time_bounds(start_time, end_time)
+    start_ts = _format_pressure_sql_timestamp(start_dt)
+    end_ts = _format_pressure_sql_timestamp(end_dt)
+
+    data_query = f"""
+        SELECT timestamp, pressure_value
+        FROM {schema_name}.pressure_sensor_data
+        WHERE machine_id = {machine_id}
+          AND created_at >= TIMESTAMP '{start_ts}'
+          AND created_at <= TIMESTAMP '{end_ts}'
+        ORDER BY timestamp ASC
+    """
+    sensor_rows = _execute_raw_sql(data_query)
+
+    if not sensor_rows:
+        LOGGER.info(
+            "Pressure timeline empty for machine=%s (id=%s) between %s and %s",
+            machine_name_db, machine_id, start_ts, end_ts,
+        )
+
+    chart_data = _build_pressure_chart_data(sensor_rows, start_time, end_time)
+
+    message = "Data Available for the requested Time Range"
+    if not chart_data:
+        message = "No pressure data available for the selected time range"
+
+    return {
+        "parameter_name": PRESSURE_PARAMETER_NAME,
+        "machine_name": machine_name_db,
+        "chart_data": chart_data,
+        "warning_limit": warning_limit,
+        "critical_limit": critical_limit,
+        "filter_time_window": {
+            "start": _format_pressure_ist_datetime(_epoch_ms_to_pressure_dt(start_time)),
+            "end": _format_pressure_ist_datetime(_epoch_ms_to_pressure_dt(end_time)),
+        },
+        "legend_data": {
+            "x_axis_label": "Timestamp",
+            "y_axis_label": PRESSURE_DISPLAY_NAME,
+            "x_axis_units": "DateTime",
+            "y_axis_units": "Pa",
+        },
+        "message": message,
+        "min_range_seconds": PRESSURE_MIN_RANGE_SECONDS,
+        "max_range_seconds": PRESSURE_MAX_RANGE_SECONDS,
+    }
 
 
 @db_session
@@ -117,7 +517,8 @@ def get_real_time_parameters_data():
          rtpa.value,
          mp.warning_limit,
          mp.critical_limit,
-         rtpa.parameter_condition.name)
+         rtpa.parameter_condition.name,
+         rtpa.machine_parameter.unit.name)
 
         for rtpa in RealTimeParameterActive
         for mp in MachineParameter
@@ -131,12 +532,12 @@ def get_real_time_parameters_data():
         )
     ).order_by(lambda _group_name, machine_location, _machine_name,
                       parameter_name, display_name, internal_parameter_name, timestamp, value, warn_limit,
-                      _critical_limit, condition_name: (_group_name, machine_location, _machine_name, parameter_name))
+                      _critical_limit, condition_name, unit_name: (_group_name, machine_location, _machine_name, parameter_name))
 
     # Convert the result to a pandas DataFrame
     columns = ['group_name', 'location', 'machine_name', 'parameter_name',
                'display_name', 'internal_parameter_name', 'time', 'value', 'warn_limit',
-               'critical_limit', 'condition_name']
+               'critical_limit', 'condition_name', 'unit_name']
     result_df = pd.DataFrame(result, columns=columns)
     result_df = result_df.sort_values(by='machine_name', key=lambda col: col.map(alphanumeric_key))
 
@@ -180,7 +581,8 @@ def get_real_time_parameters_data():
                         'parameter_value': parameter_value,
                         'parameter_state': row['condition_name'],
                         'warning_limit': warning_limit,
-                        'critical_limit': critical_limit
+                        'critical_limit': critical_limit,
+                        'unit_name': row['unit_name'] if not pd.isna(row['unit_name']) else None
                     }
 
                     machine_json['parameters'].append(parameter_json)
@@ -248,12 +650,24 @@ def get_real_time_parameters_data():
         elif group_json['count']['WARNING'] > 0:
             group_json['group_state'] = 'WARNING'
 
+        if group_name != PRESSURE_PARAMETER_GROUP:
+            _merge_pressure_into_group_json(group_json)
+
         group_info = {"item_name": group_name,
                       "item_state": group_json['group_state']}
 
         groups_overview.append(group_info)
 
         json_list.append(group_json)
+
+    pressure_group = get_pressure_monitoring_group_details()
+    if pressure_group['group_details']:
+        groups_overview.append({
+            'item_name': pressure_group['group_name'],
+            'item_state': pressure_group['group_state'],
+        })
+        json_list.append(pressure_group)
+        groups_overview = sorted(groups_overview, key=lambda group: group['item_name'])
 
     response = {"group_names": groups_overview,
                 "all_group_details": json_list}
@@ -499,6 +913,17 @@ def get_latest_snapshot_for_parameter_group_test(parameter_group_name: str = "AP
     try:
 
         LOGGER.info("Retrieving current machine details")
+
+        if parameter_group_name == PRESSURE_PARAMETER_GROUP:
+            group_statuses = get_parameter_group_statuses()
+            if not any(item['item_name'] == PRESSURE_PARAMETER_GROUP for item in group_statuses):
+                group_statuses.append(_get_pressure_group_status_item())
+                group_statuses = sorted(group_statuses, key=lambda group: group['item_name'])
+            response = {
+                "group_names": group_statuses,
+                "requested_group_details": get_pressure_monitoring_group_details(),
+            }
+            return response
 
         response = {"group_names": get_parameter_group_statuses(),
                     "requested_group_details": get_machine_states_2(parameter_group_name)}
@@ -1138,7 +1563,8 @@ def get_real_time_parameters_data_by_group(group_name):
          rtpa.value,
          mp.warning_limit,
          mp.critical_limit,
-         rtpa.parameter_condition.name)
+         rtpa.parameter_condition.name,
+         rtpa.machine_parameter.unit.name)
 
         for rtpa in RealTimeParameterActive
         for mp in MachineParameter
@@ -1152,12 +1578,12 @@ def get_real_time_parameters_data_by_group(group_name):
         )
     ).order_by(lambda machine_location, _machine_name,
                       parameter_name, display_name, internal_parameter_name, timestamp, value, warn_limit,
-                      _critical_limit, condition_name: (machine_location, _machine_name, parameter_name))
+                      _critical_limit, condition_name, unit_name: (machine_location, _machine_name, parameter_name))
 
     # Convert the result to a pandas DataFrame
     columns = ['location', 'machine_name', 'parameter_name',
                'display_name', 'internal_parameter_name', 'time', 'value', 'warn_limit',
-               'critical_limit', 'condition_name']
+               'critical_limit', 'condition_name', 'unit_name']
     result_df = pd.DataFrame(result, columns=columns)
 
     group_json = {'group_name': group_name, 'group_details': [], 'group_state': 'OK',
@@ -1189,7 +1615,8 @@ def get_real_time_parameters_data_by_group(group_name):
                     'parameter_value': parameter_value,
                     'parameter_state': row['condition_name'],
                     'warning_limit': warning_limit,
-                    'critical_limit': critical_limit
+                    'critical_limit': critical_limit,
+                    'unit_name': row['unit_name'] if not pd.isna(row['unit_name']) else None
                 }
 
                 machine_json['parameters'].append(parameter_json)
@@ -1513,7 +1940,8 @@ def get_machine_states_2(group_name):
          rtpa.value,
          mp.warning_limit,
          mp.critical_limit,
-         rtpa.parameter_condition.name)
+         rtpa.parameter_condition.name,
+         rtpa.machine_parameter.unit.name)
 
         for rtpa in RealTimeParameterActive
         for mp in MachineParameter
@@ -1527,12 +1955,12 @@ def get_machine_states_2(group_name):
         )
     ).order_by(lambda machine_location, _machine_name,
                       parameter_name, display_name, internal_parameter_name, timestamp, value, warn_limit,
-                      _critical_limit, condition_name: (machine_location, _machine_name, parameter_name))
+                      _critical_limit, condition_name, unit_name: (machine_location, _machine_name, parameter_name))
 
     # Convert the result to a pandas DataFrame
     columns = ['location', 'machine_name', 'parameter_name',
                'display_name', 'internal_parameter_name', 'time', 'value', 'warn_limit',
-               'critical_limit', 'condition_name']
+               'critical_limit', 'condition_name', 'unit_name']
     result_df = pd.DataFrame(list(result), columns=columns)
     result_df = result_df.sort_values(by='machine_name', key=lambda col: col.map(alphanumeric_key))
 
@@ -1623,7 +2051,8 @@ def get_machine_states_2(group_name):
                     'parameter_value': parameter_value,
                     'parameter_state': row['condition_from_mtlinki'],  # Changed to condition_from_mtlinki
                     'warning_limit': warning_limit,
-                    'critical_limit': critical_limit
+                    'critical_limit': critical_limit,
+                    'unit_name': row['unit_name'] if not pd.isna(row['unit_name']) else None
                 }
 
                 machine_json['parameters'].append(parameter_json)
@@ -1695,6 +2124,9 @@ def get_machine_states_2(group_name):
         group_json['group_state'] = 'CRITICAL'
     elif group_json['count']['WARNING'] > 0:
         group_json['group_state'] = 'WARNING'
+
+    if group_name != PRESSURE_PARAMETER_GROUP:
+        _merge_pressure_into_group_json(group_json)
 
     return group_json
 
@@ -2076,6 +2508,11 @@ def get_parameter_group_statuses():
 
         # Sorting the list based on the value of 'key1'
         status_list = sorted(status_list, key=lambda group: group['item_name'])
+
+        pressure_status = _get_pressure_group_status_item()
+        if not any(item['item_name'] == pressure_status['item_name'] for item in status_list):
+            status_list.append(pressure_status)
+            status_list = sorted(status_list, key=lambda group: group['item_name'])
 
         return status_list
 
@@ -6074,7 +6511,9 @@ def get_real_time_parameters_data_mtlinki_new_layout():
          mp.warning_limit,
          mp.critical_limit,
          rtpa.parameter_condition.name,
-         pg.parameter_type)
+         pg.parameter_type,
+         rtpa.machine_parameter.unit.name,
+         rtpa.machine_parameter.unit.short_name)
 
         for rtpa in RealTimeParameterActive
         for mp in MachineParameter
@@ -6084,16 +6523,15 @@ def get_real_time_parameters_data_mtlinki_new_layout():
                 rtpa.machine_parameter == mp and
                 mp.parameter_group == pg and
                 mp.machine == m
-
         )
     ).order_by(lambda _group_name, machine_location, _machine_name,
                       parameter_name, display_name, internal_parameter_name, timestamp, value, warn_limit,
-                      _critical_limit, condition_name, _param_type: (_group_name, machine_location, _machine_name, parameter_name))
+                      _critical_limit, condition_name, _param_type, unit_name, unit_short_name: (_group_name, machine_location, _machine_name, parameter_name))
 
     # Convert the result to a pandas DataFrame
     columns = ['group_name', 'location', 'machine_name', 'parameter_name',
                'display_name', 'internal_parameter_name', 'time', 'value', 'warn_limit',
-               'critical_limit', 'condition_name', 'parameter_type']
+               'critical_limit', 'condition_name', 'parameter_type', 'unit_name', 'unit_short_name']
     result_df = pd.DataFrame(result, columns=columns)
     result_df = result_df.sort_values(by='machine_name', key=lambda col: col.map(alphanumeric_key))
 
@@ -6129,7 +6567,9 @@ def get_real_time_parameters_data_mtlinki_new_layout():
                     'warning_limit': warning_limit,
                     'critical_limit': critical_limit,
                     'parameter_group': row['group_name'],
-                    'parameter_type': row['parameter_type'] if not pd.isna(row['parameter_type']) else None
+                    'parameter_type': row['parameter_type'] if not pd.isna(row['parameter_type']) else None,
+                    'unit_name': row['unit_name'] if not pd.isna(row['unit_name']) else None,
+                    'unit_short_name': row['unit_short_name'] if not pd.isna(row['unit_short_name']) else None
                 }
 
                 machine_json['parameters'].append(parameter_json)
@@ -6183,6 +6623,8 @@ def get_real_time_parameters_data_mtlinki_new_layout():
             location_json['line_state'] = 'WARNING'
 
         json_list.append(location_json)
+
+    json_list, _ = _merge_pressure_machines_into_lines(json_list)
 
     response = {"lines": json_list}
     return response

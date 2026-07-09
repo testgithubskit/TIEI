@@ -31,15 +31,26 @@ LOGGER = logging.getLogger(__name__)
 
 APP = FastAPI()
 
-ALLOWED_ORIGINS = ["*"]
-#ALLOWED_ORIGINS = ["http://localhost:8080", "http://172.18.20.27:8080", "http://172.18.20.27"]
+# Private / local network frontends (different host, IP, or port than the API).
+# Browsers require explicit origins when credentials are sent — "*" is not allowed.
+ALLOWED_ORIGIN_REGEX = (
+    r"https?://"
+    r"(localhost|127\.0\.0\.1"
+    r"|172\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|10\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|192\.168\.\d{1,3}\.\d{1,3}\.\d{1,3}"
+    r"|maintenance\.cmti\.online)"
+    r"(:\d+)?"
+)
 
 APP.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
+    allow_origins=[],
+    allow_origin_regex=ALLOWED_ORIGIN_REGEX,
     allow_credentials=True,
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 APP.add_event_handler("startup", initialize_server)

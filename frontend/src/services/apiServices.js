@@ -1,24 +1,27 @@
 import axios from 'axios';
 
 const getBaseUrl = () => {
-    const isDevelopment = process.env.NODE_ENV === 'development';
-    
-    if (isDevelopment) {
-      return 'http://172.18.100.87:8000/api/v1';
-    }
-    
-    // In production, use the full HTTPS URL
-    return 'https://maintenance.cmti.online/api/v1';
-  };
-  
-  export const backendApi = axios.create({
-    baseURL: getBaseUrl(),
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    timeout: 30000,
-    withCredentials: true,
-  });
+  if (import.meta.env.VITE_DEV_API_URL) {
+    return import.meta.env.VITE_DEV_API_URL;
+  }
+
+  const isDevelopment = import.meta.env.DEV;
+
+  if (isDevelopment) {
+    return 'http://172.18.100.87:8000/api/v1';
+  }
+
+  return import.meta.env.VITE_API_URL || 'https://maintenance.cmti.online/api/v1';
+};
+
+export const backendApi = axios.create({
+  baseURL: getBaseUrl(),
+  headers: {
+    'Content-Type': 'application/json',
+  },
+  timeout: 30000,
+  withCredentials: false,
+});
 
 // Request interceptor
 backendApi.interceptors.request.use(

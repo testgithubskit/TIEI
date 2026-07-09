@@ -67,7 +67,7 @@ from machine_monitoring_app.database.crud_operations import get_current_machine_
     get_machine_names_2, get_maintenance_activities_parameter_new, fetch_update_logs, fetch_update_logs_by_name, \
     fetch_update_logs_by_user, fetch_update_logs_by_time_range, get_disconnected_machines_data, \
     get_disconnection_history_data, get_cycle_time_factory_layout, get_cycle_time_machine_details, \
-    get_all_machines_for_cycle_time
+    get_all_machines_for_cycle_time, get_pressure_machine_timeline, parse_pressure_time_param
 
 from machine_monitoring_app.database import TIMESCALEDB_URL
 from machine_monitoring_app.exception_handling.custom_exceptions import NoParameterGroupError, GetParamGroupDBError, \
@@ -518,6 +518,25 @@ async def read_timeline_machine_parameter_name_mtlinki(machineName: str, paramet
     if startTime > endTime:
         raise HTTPException(status_code=400, detail="Start Time cannot be greater than End Time")
     try:
+        if parameterName.upper() == 'AIR_PRESSURE':
+            response_data = get_pressure_machine_timeline(
+                machine_name=machineName,
+                start_time=startTime,
+                end_time=endTime,
+            )
+            end_time = time.time() - process_start_time
+            LOGGER.info(
+                f"Pressure machine routed via mtlinki endpoint: {(round((end_time * 1000), 2))} ms"
+            )
+            return {
+                "parameter_name": response_data["parameter_name"],
+                "chart_data": response_data["chart_data"],
+                "warning_limit": response_data["warning_limit"],
+                "critical_limit": response_data["critical_limit"],
+                "legend_data": response_data["legend_data"],
+                "message": response_data["message"],
+            }
+
         response_data = get_machine_timeline_parameter_name_mtlinki(machine_name=machineName,
                                                                     parameter_name=parameterName,
                                                                     start_time=startTime,
@@ -536,6 +555,8 @@ async def read_timeline_machine_parameter_name_mtlinki(machineName: str, paramet
                                                     "axis and timestamp")
     except GetMachineTimelineError as error:
         raise HTTPException(status_code=404, detail=f"Issue with database: {error.args[0]}")
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
 
 
 @ROUTER.get("/factory/analytics/machines/{machineName}",
@@ -1787,4 +1808,59 @@ async def update_cycle_time_limits(
         LOGGER.error(f"Error updating cycle time limits: {error}")
         raise HTTPException(status_code=500, detail=f"Failed to update cycle time limits: {str(error)}")
 
+
+@ROUTER.get("/pressure/machines/{machineName}/air-pressure")
+async def read_pressure_machine_air_pressure(
+    machineName: str,
+    startTime: str = Query(
+        ...,
+        description="Start time: epoch milliseconds or IST datetime (YYYY-MM-DD HH:MM:SS).",
+        example="2026-06-30 15:08:06",
+    ),
+    endTime: str = Query(
+        ...,
+        description="End time: epoch milliseconds or IST datetime (YYYY-MM-DD HH:MM:SS).",
+        example="2026-06-30 15:08:16",
+    ),
+):
+    """
+    GET PRESSURE MACHINE AIR PRESSURE TIMELINE
+    ==========================================
+
+    Returns air pressure sensor readings for a pressure monitoring machine.
+    Time filtering uses the pressure_sensor_data.created_at column.
+    Allowed range: 1 to 3 seconds.
+
+    **startTime / endTime** accept either:
+    - Epoch milliseconds (e.g. `1782812286622`)
+    - IST datetime string (e.g. `2026-06-30 15:08:06`)
+
+    **chart_data** items are `[IST datetime string, pressure_value]` plotted across your
+    selected **startTime → endTime** window. Pressure values are from the database;
+    timestamps are aligned to the filter range for display.
+    """
+    process_start_time = time.time()
+    try:
+        start_ms = parse_pressure_time_param(startTime)
+        end_ms = parse_pressure_time_param(endTime)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    if start_ms > end_ms:
+        raise HTTPException(status_code=400, detail="Start Time cannot be greater than End Time")
+
+    try:
+        response_data = get_pressure_machine_timeline(
+            machine_name=machineName,
+            start_time=start_ms,
+            end_time=end_ms,
+        )
+        end_time = time.time() - process_start_time
+        LOGGER.info(f"Total Time Taken For pressure timeline endpoint: {(round((end_time * 1000), 2))} ms")
+        return response_data
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error fetching pressure timeline for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve pressure data: {str(error)}")
 

@@ -17,6 +17,7 @@ import { GridComponent, TooltipComponent } from 'echarts/components';
 import { CanvasRenderer } from 'echarts/renderers';
 import VChart from 'vue-echarts';
 
+// ECharts registration (cycle time bar chart only — pressure uses DyLineChartWithLimits)
 use([GridComponent, TooltipComponent, BarChart, CanvasRenderer]);
 
 import Toastify from 'toastify-js';
@@ -42,6 +43,7 @@ const ActivityStore = useActivityStore();
 
 // Cycle time specific state
 const isCycleTimeSelected = ref(false);
+const isPressureSelected = computed(() => machineSamplingWithLimitsStore.isPressureContext);
 const cycleTimeData = ref(null);
 const cycleTimeChartData = ref([]);
 const cycleTimeLimits = ref({ warning: null, critical: null });
@@ -156,6 +158,11 @@ let chartData = computed(() => {
   return machineSamplingWithLimitsStore.chartData;
 });
 
+const hasChartData = computed(() => {
+  const data = machineSamplingWithLimitsStore.chartData;
+  return Array.isArray(data) && data.length > 0;
+});
+
 let warningLimit = computed(() => {
   return machineSamplingWithLimitsStore.warningLimit;
 });
@@ -174,28 +181,71 @@ function subtractHours(date, hours) {
   return date;
 }
 
-let currentDate = new Date();
+function resolveIsPressure() {
+  const group = (machineSamplingWithLimitsStore.parameterGroup || '').toUpperCase();
+  const param = (machineSamplingWithLimitsStore.actualParameterName || '').toUpperCase();
+  return (
+    machineSamplingWithLimitsStore.isPressureContext
+    || group === 'AIR_PRESSURE'
+    || param === 'AIR_PRESSURE'
+    || machineSamplingWithLimitsStore.lastSelectedParameter?.is_pressure_machine === true
+  );
+}
 
-machineSamplingWithLimitsStore.selectedDates.to = currentDate.getTime();
+function initializePressureDates() {
+  machineSamplingWithLimitsStore.isPressureMachine = true;
+  if (machineSamplingWithLimitsStore.lastSelectedParameter) {
+    machineSamplingWithLimitsStore.setMachineDetails(machineSamplingWithLimitsStore.lastSelectedParameter);
+  } else {
+    machineSamplingWithLimitsStore.refreshPressureTimestamp(3);
+  }
+}
 
-let oneHourEarlier = subtractHours(currentDate, 1);
-let formattedDateOneHourEarlier = oneHourEarlier.getTime();
+const fromPickerDatetime = computed(() => {
+  if (resolveIsPressure()) {
+    return new Date(machineSamplingWithLimitsStore.selectedDates.from);
+  }
+  return subtractHours(new Date(), 1);
+});
 
-machineSamplingWithLimitsStore.selectedDates.from = formattedDateOneHourEarlier;
+const toPickerDatetime = computed(() => {
+  if (resolveIsPressure()) {
+    return new Date(machineSamplingWithLimitsStore.selectedDates.to);
+  }
+  return new Date();
+});
 
 const handleQuerySubmit = async () => {
-  // Check if CYCLE_TIME is selected
   if (isCycleTimeSelected.value) {
     await handleCycleTimeSubmit();
     return;
   }
 
-  const sixHoursInMillis = 6 * 60 * 60 * 1000; // 2 hours in milliseconds
+  if (isPressureSelected.value || (machineSamplingWithLimitsStore.actualParameterName || '').toUpperCase() === 'AIR_PRESSURE') {
+    machineSamplingWithLimitsStore.normalizeInvertedPressureTimeRange();
+    const timeDifferenceSeconds = machineSamplingWithLimitsStore.pressureRangeSeconds;
+    const minSeconds = machineSamplingWithLimitsStore.pressureRangeLimits.min ?? 1;
+    const maxSeconds = machineSamplingWithLimitsStore.pressureRangeLimits.max ?? 3;
+
+    if (timeDifferenceSeconds < minSeconds || timeDifferenceSeconds > maxSeconds) {
+      Toastify({
+        text: `For Air Pressure, select a time range between ${minSeconds} and ${maxSeconds} seconds`,
+        duration: 5000,
+        close: true,
+        gravity: 'top',
+        position: 'right',
+        backgroundColor: 'red',
+      }).showToast();
+      return;
+    }
+
+    await machineSamplingWithLimitsStore.fetchPressureMachineData();
+    return;
+  }
+
+  const sixHoursInMillis = 6 * 60 * 60 * 1000;
   const timeDifference = machineSamplingWithLimitsStore.selectedDates.to - machineSamplingWithLimitsStore.selectedDates.from;
-  console.log("time diffrence")
-  console.log(timeDifference)
-  // Check if the time difference is more than 2 hours
-  // Check if the parameter group is DYNAMIC_PARAMETERS and the time difference is more than 6 hours
+
   if (machineSamplingWithLimitsStore.parameterGroup === 'DYNAMIC_PARAMETERS' && timeDifference > sixHoursInMillis) {
     Toastify({
       text: 'For DYNAMIC_PARAMETERS, please select a time range less than 6 hours',
@@ -205,10 +255,9 @@ const handleQuerySubmit = async () => {
       position: 'right',
       backgroundColor: 'red',
     }).showToast();
-    return; // Do not proceed further for DYNAMIC_PARAMETERS with time range > 6 hours
+    return;
   }
 
-  // Getting the Initial Latest Data from the backend - Start
   await machineSamplingWithLimitsStore.fetchMachineParameterData();
 };
 const handleQuerySubmitActivity = async () => {
@@ -236,27 +285,21 @@ const handleBack = () => {
 };
 
 const handleFromDateChange = (dateValue) => {
-  // Handle the "from" date change event here
-  // Perform any additional actions as needed
   machineSamplingWithLimitsStore.selectedDates.from = dateValue.value;
 };
 
 const handleToDateChange = (dateValue) => {
-  // Handle the "to" date change event here
-  // Perform any additional actions as needed
   machineSamplingWithLimitsStore.selectedDates.to = dateValue.value;
 };
 
-onBeforeMount(async () => {
-  console.log("sampling on mount");
-  console.log(machineSamplingWithLimitsStore.parameterGroup);
+onBeforeMount(() => {
+  if (resolveIsPressure()) {
+    initializePressureDates();
+  }
 });
 
 function convertEpochToLocal(epochTimestamp) {
-  // Create a Date object from the epoch timestamp
   const date = new Date(epochTimestamp);
-
-  // Get the local date and time components in user-friendly format
   const options = {
     year: 'numeric',
     month: '2-digit',
@@ -264,39 +307,37 @@ function convertEpochToLocal(epochTimestamp) {
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
-    timeZoneName: 'short', // Include time zone abbreviation for clarity
+    timeZoneName: 'short',
   };
-
-  // Format the local datetime string
-  const localDateTimeString = date.toLocaleString('en-IN', options);
-
-  return localDateTimeString;
+  return date.toLocaleString('en-IN', options);
 }
 
-
-
-// const machineSamplingWithLimitsStore = useMachineSamplingWithLimitsStore();
 const currentParameter = ref(null);
 
-
 onMounted(async () => {
-  // Check if CYCLE_TIME is selected from store or localStorage
   const isCycleTimeFromStorage = localStorage.getItem('isCycleTimeSelected') === 'true';
-  
+  const isPressure = resolveIsPressure();
+
   if (machineSamplingWithLimitsStore.parameterGroup === 'CYCLE_TIME' || isCycleTimeFromStorage) {
     isCycleTimeSelected.value = true;
     localStorage.setItem('isCycleTimeSelected', 'true');
-    // Set default time range
     const currentDate = new Date();
     machineSamplingWithLimitsStore.selectedDates.to = currentDate.getTime();
     const oneHourEarlier = subtractHours(currentDate, 1);
     machineSamplingWithLimitsStore.selectedDates.from = oneHourEarlier.getTime();
-    // Fetch cycle time data
     await fetchCycleTimeData();
+  } else if (isPressure) {
+    isCycleTimeSelected.value = false;
+    localStorage.setItem('isCycleTimeSelected', 'false');
+    initializePressureDates();
+    await machineSamplingWithLimitsStore.fetchPressureMachineData();
   } else {
     isCycleTimeSelected.value = false;
     localStorage.setItem('isCycleTimeSelected', 'false');
-    // Only fetch if we have valid machine and parameter data
+    const currentDate = new Date();
+    machineSamplingWithLimitsStore.selectedDates.to = currentDate.getTime();
+    const oneHourEarlier = subtractHours(new Date(currentDate), 1);
+    machineSamplingWithLimitsStore.selectedDates.from = oneHourEarlier.getTime();
     if (machineSamplingWithLimitsStore.lastSelectedParameter && machineSamplingWithLimitsStore.machine) {
       machineSamplingWithLimitsStore.setMachineDetails(machineSamplingWithLimitsStore.lastSelectedParameter);
       await machineSamplingWithLimitsStore.fetchMachineParameterData();
@@ -446,19 +487,21 @@ const updateCycleTimeLimits = async () => {
 
 
 function OnHoverCallBack(hoverData){
-  console.log("hover parent");
-  console.log(hoverData);
-  let dateTime = convertEpochToLocal(hoverData[0]["xval"]);
-  let newHoverData = {
-      "xAxisValue": dateTime,
-      "yAxisValue": hoverData[0]["yval"],
-      "xAxisLabel": machineSamplingWithLimitsStore.hoverData.xAxisLabel,
-      "yAxisLabel": machineSamplingWithLimitsStore.hoverData.yAxisLabel,
-      "xAxisUnits": machineSamplingWithLimitsStore.hoverData.xAxisUnits,
-      "yAxisUnits": machineSamplingWithLimitsStore.hoverData.yAxisUnits
-    }
-  machineSamplingWithLimitsStore.hoverData = newHoverData;
+  if (!hoverData?.length) return;
+  const xval = hoverData[0].xval;
+  const dateTime = typeof xval === 'number'
+    ? convertEpochToLocal(xval)
+    : String(xval);
+  machineSamplingWithLimitsStore.hoverData = {
+    xAxisValue: dateTime,
+    yAxisValue: hoverData[0].yval,
+    xAxisLabel: machineSamplingWithLimitsStore.hoverData.xAxisLabel || 'Time',
+    yAxisLabel: machineSamplingWithLimitsStore.hoverData.yAxisLabel || 'Pressure',
+    xAxisUnits: machineSamplingWithLimitsStore.hoverData.xAxisUnits || 'IST',
+    yAxisUnits: machineSamplingWithLimitsStore.hoverData.yAxisUnits || '',
+  };
 }
+
 </script>
 
 <template>
@@ -494,7 +537,7 @@ function OnHoverCallBack(hoverData){
           <CardBoxWidgetPlainWrap 
           v-if="!isCycleTimeSelected"
           label="Parameter Name"
-          :parameter-value="machineSamplingWithLimitsStore.actualParameterName">
+          :parameter-value="isPressureSelected ? 'Air Pressure' : machineSamplingWithLimitsStore.actualParameterName">
           </CardBoxWidgetPlainWrap>
           <CardBoxWidgetPlainWrap 
           v-if="isCycleTimeSelected"
@@ -514,7 +557,7 @@ function OnHoverCallBack(hoverData){
             </div>
           </CardBoxWidgetPlainWrap>
           <CardBoxWidgetPlainWrap 
-          v-if="!isCycleTimeSelected"
+          v-if="!isCycleTimeSelected && !isPressureSelected"
           label="Warning Limit:">
             <div class="flex flex-row">
               <div class="relative mt-2">
@@ -539,7 +582,17 @@ function OnHoverCallBack(hoverData){
             </div>
           </CardBoxWidgetPlainWrap>
           <CardBoxWidgetPlainWrap 
-          v-if="!isCycleTimeSelected"
+          v-if="isPressureSelected"
+          label="Warning Limit"
+          :parameter-value="warningLimit">
+          </CardBoxWidgetPlainWrap>
+          <CardBoxWidgetPlainWrap 
+          v-if="isPressureSelected"
+          label="Critical Limit"
+          :parameter-value="criticalLimit">
+          </CardBoxWidgetPlainWrap>
+          <CardBoxWidgetPlainWrap 
+          v-if="!isCycleTimeSelected && !isPressureSelected"
           label="Critical Limit:">
             <div class="flex flex-row">
               <div class="relative mt-2">
@@ -558,16 +611,24 @@ function OnHoverCallBack(hoverData){
         <div class="flex justify-normal">
           <div>
             <label class="block mb-2 text-gray-700">From</label>
-            <TimePickerFlatEmitter :defaultDatetime="subtractHours(new Date(), 1)" type="from" @date-change="handleFromDateChange" />
+            <TimePickerFlatEmitter :defaultDatetime="fromPickerDatetime" type="from" @date-change="handleFromDateChange" />
           </div>
 
           <div class="ml-8">
             <label class="block mb-2 text-gray-700">To</label>
-            <TimePickerFlatEmitter :defaultDatetime="new Date()" type="to" @date-change="handleToDateChange" />
+            <TimePickerFlatEmitter :defaultDatetime="toPickerDatetime" type="to" @date-change="handleToDateChange" />
           </div>
 
           <div class="flex flex-col items-center justify-end ml-8">
             <BaseButton type="submit" color="info" label="Submit" @click="handleQuerySubmit" />
+          </div>
+
+          <div v-if="isPressureSelected" class="ml-8 flex flex-col justify-center max-w-xs">
+            <p class="text-sm text-amber-700">
+              Select a time range between
+              {{ machineSamplingWithLimitsStore.pressureRangeLimits.min ?? 1 }} and
+              {{ machineSamplingWithLimitsStore.pressureRangeLimits.max ?? 3 }} seconds.
+            </p>
           </div>
 
           <div v-if="isCycleTimeSelected && cycleTimeData" class="ml-8 flex flex-col justify-center">
@@ -583,7 +644,7 @@ function OnHoverCallBack(hoverData){
             </span>
           </div>
 
-          <div v-if="!isCycleTimeSelected" class="flex flex-col items-center justify-end ml-8">
+          <div v-if="!isCycleTimeSelected && !isPressureSelected" class="flex flex-col items-center justify-end ml-8">
             <BaseButton type="submit" color="info" label="View Activity" @click="handleQuerySubmitActivity()" />
           </div>
         </div>
@@ -620,12 +681,22 @@ function OnHoverCallBack(hoverData){
 
         <!-- Regular Chart (hidden when CYCLE_TIME is selected) -->
         <CardBox v-if="!isCycleTimeSelected" class="mb-8">
-          <div>
-            <DyLineChartWithLimits :data="chartData" 
-            :warningLimit="warningLimit"
-            :criticalLimit="criticalLimit"
-            class="h-96"
-            @data-hovered="OnHoverCallBack" />
+          <div v-if="!hasChartData" class="p-4 bg-yellow-100 border border-yellow-400 rounded">
+            <p class="font-semibold text-yellow-800">
+              {{ machineSamplingWithLimitsStore.chartFetchMessage || 'No air pressure data available for the selected time range.' }}
+            </p>
+            <p class="text-sm text-yellow-700">
+              Select a window of 1–3 seconds around the machine's latest reading time.
+            </p>
+          </div>
+          <div v-else>
+            <DyLineChartWithLimits
+              :data="chartData"
+              :warningLimit="warningLimit"
+              :criticalLimit="criticalLimit"
+              class="h-96"
+              @data-hovered="OnHoverCallBack"
+            />
           </div>
         </CardBox>      
 

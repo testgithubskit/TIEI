@@ -421,12 +421,10 @@ export const useFactoryPollOverviewStore = defineStore('useFactoryPollOverview',
         const response = await backendApi.get(url);
         this.groupData = response.data.all_group_details;
         
-        // Preserve CYCLE_TIME state before updating
         const existingCycleTime = this.availableParameters.find(p => p.item_name === 'CYCLE_TIME');
         
         this.availableParameters = response.data.group_names;
         
-        // Add CYCLE_TIME back with preserved state
         if (existingCycleTime) {
           this.availableParameters.push(existingCycleTime);
         } else {
@@ -434,7 +432,6 @@ export const useFactoryPollOverviewStore = defineStore('useFactoryPollOverview',
         }
         
         console.log('Available parameters:', this.availableParameters);
-        //this.SelectedParmeter = response.data.group_names[0];
       } catch (error) {
         console.error('Error fetching/updating available machines:', error);
         throw error;
@@ -458,42 +455,36 @@ export const useFactoryPollOverviewStore = defineStore('useFactoryPollOverview',
       return {"groupName": groupData.group_name, "groupState": groupData.group_state};
     },
     async updateGroupData() {
-      // Fetch data for the selected group from the backend and update it here.
-      //TODO Changed the Endpoint from /factory-state
       const url = `/factory-state-mtlinki-test/${this.SelectedParmeter.item_name}`;
       try {
         const response = await backendApi.get(url);
 
-        // Preserve CYCLE_TIME state before updating
         const existingCycleTime = this.availableParameters.find(p => p.item_name === 'CYCLE_TIME');
         
-        // Update availableParameters with the group_names from the response
         this.availableParameters = response.data.group_names;
         
-        // Add CYCLE_TIME back with preserved state
         if (existingCycleTime) {
           this.availableParameters.push(existingCycleTime);
         } else {
           this.availableParameters.push({ item_name: 'CYCLE_TIME', item_state: 'OK' });
         }
 
-        // Update the groupData for the selected group
         const index = this.groupData.findIndex(group => group.group_name === this.SelectedParmeter.item_name);
 
         if (index !== -1) {
           this.groupData[index] = response.data.requested_group_details;
+        } else if (this.SelectedParmeter.item_name === 'AIR_PRESSURE') {
+          this.groupData.push(response.data.requested_group_details);
         }
         this.isSuccessMessage = true;
         this.alertMessage = 'Fetched New Data';
       } catch (error) {
         console.error('Error fetching group data:', error);
 
-        // Set the alert message for failure
         this.alertMessage = 'Fetching New Data failed.';
         this.isSuccessMessage = false;
         throw error;
       } finally {
-        // Set a timer to clear the alert after a few seconds
         setTimeout(() => {
           this.alertMessage = null;
         }, 1000);

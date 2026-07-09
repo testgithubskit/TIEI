@@ -22,7 +22,7 @@ const props = defineProps({
     default: "text-emerald-500",
   },
   parameterValue: {
-    type: String,
+    type: [String, Number],
     default: null,
   },
   borderSide:{
@@ -50,10 +50,10 @@ const borderClass= computed(() => {
 });
 
 function replaceUnderscores(inputString) {
-  if (inputString !== null){
-    return inputString.replace(/_/g, ' ');
+  if (inputString == null) {
+    return '';
   }
-  
+  return String(inputString).replace(/_/g, ' ');
 }
 
 </script>

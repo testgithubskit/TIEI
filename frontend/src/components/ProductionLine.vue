@@ -22,22 +22,12 @@ const props = defineProps({
   },
   machines: {
     type: Array,
-    default: [
-      {
-        "machine_name": "Mac-166",
-        "machine_state": "warning",
-        "parameters": [
-          {
-            "internal_parameter_name": "Param-121266",
-            "display_name": "Z",
-            "actual_parameter_name": "temperature",
-            "parameter_state": "normal",
-            "parameter_value": 42,
-            "latest_update_time": 1702695914272
-          }
-        ]
-      }],
-  }
+    default: () => [],
+  },
+  highlightPressureMachines: {
+    type: Boolean,
+    default: false,
+  },
 });
 
 const borderClass = 'rounded-lg shadow-lg  hover:shadow-md transition-shadow duration-10';
@@ -52,11 +42,25 @@ const bgColor = computed(() => {
   }[props.lineState];
 });
 
+const displayMachines = computed(() => {
+  const isPressureMachine = (machine) => (
+    machine.is_pressure_machine === true
+    || machine.machine_name === '2nd Rough'
+    || machine.machine_name === '4th Finish'
+  );
+  const pressureMachines = props.machines.filter((machine) => isPressureMachine(machine));
+  const otherMachines = props.machines.filter((machine) => !isPressureMachine(machine));
+
+  if (props.highlightPressureMachines && props.lineName === 'BLOCK') {
+    return pressureMachines;
+  }
+
+  return [...pressureMachines, ...otherMachines];
+});
+
 const emit = defineEmits(['machine-parameter-clicked']);
 
-// Function to handle the event received from the child component
 const handleMachineParameterClick = (clickedParameter) => {
-  // Perform any necessary actions with the updated parameters
   emit('machine-parameter-clicked', clickedParameter);
 };
 
@@ -76,11 +80,12 @@ const handleMachineParameterClick = (clickedParameter) => {
     </div>
     <div class="flex flex-wrap justify-start gap-4 px-4">
       <MachineWithParameters
-        v-for="machine in props.machines"
+        v-for="machine in displayMachines"
         :key="machine.machine_name"
         :machineName="machine.machine_name"
         :machineState="machine.machine_state"
         :parameters="machine.parameters"
+        :isPressureMachine="machine.is_pressure_machine === true || machine.machine_name === '2nd Rough' || machine.machine_name === '4th Finish'"
         @machine-parameter-clicked="handleMachineParameterClick"
       />
     </div>

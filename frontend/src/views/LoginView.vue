@@ -30,13 +30,15 @@ const submit = async () => {
   localStorage.password = form.password;
 
   try {
-    // Assuming fetchAuth returns a Promise
-    await loginStore.fetchAuth();
+    const isAuthenticated = await loginStore.fetchAuth();
 
-    // The authentication was successful
-    router.push("/factory-level-polling/parameter-overview/grid");
+    if (!isAuthenticated) {
+      alert("Not authenticated. Please try again.");
+      return;
+    }
+
+    router.push("/managerialOverview");
   } catch (error) {
-    // The authentication failed
     alert("Not authenticated. Please try again.");
   }
 };

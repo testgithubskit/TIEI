@@ -35,10 +35,6 @@
                 <div class="noc-metric-value noc-crit">{{ totalCritical }}</div>
                 <div class="noc-metric-label noc-crit-label">CRITICAL</div>
               </div>
-              <div class="noc-metric-tile noc-metric-disc">
-                <div class="noc-metric-value noc-disc">{{ totalDisconnected }}</div>
-                <div class="noc-metric-label noc-disc-label">DISCONNECTED</div>
-              </div>
             </div>
 
             <!-- ── Status Summary Bar ── -->
@@ -46,7 +42,6 @@
               <div class="noc-status-bar-fill noc-bar-ok"    :style="{ flex: totalOk }"></div>
               <div class="noc-status-bar-fill noc-bar-warn"  :style="{ flex: totalWarning }"></div>
               <div class="noc-status-bar-fill noc-bar-crit"  :style="{ flex: totalCritical }"></div>
-              <div class="noc-status-bar-fill noc-bar-disc"  :style="{ flex: totalDisconnected }"></div>
             </div>
           </div>
 
@@ -56,7 +51,7 @@
               <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
             </svg>
             ACTIVE ALERTS
-            <span class="noc-alert-count">{{ totalWarning + totalCritical + totalDisconnected }}</span>
+            <span class="noc-alert-count">{{ totalWarning + totalCritical }}</span>
           </div>
 
           <div class="noc-filters px-3 py-2 flex gap-2 overflow-x-auto" :class="panelTheme === 'dark' ? 'bg-[#0f1923] border-b border-[#334155]' : 'bg-[#f1f5f9] border-b border-[#e2e8f0]'">
@@ -105,25 +100,25 @@
                   <!-- Flex container for alert details -->
                   <div class="flex-1 min-w-0 flex items-center px-1">
                     <!-- Machine Name -->
-                    <div class="w-[17%] shrink-0 font-bold truncate noc-machine-txt" :title="alert.machineName">
+                    <div class="w-[15%] shrink-0 font-bold truncate noc-machine-txt" :title="alert.machineName">
                       {{ formatMachineName(alert.machineName) }}
                     </div>
-                    <!-- Group/Parameter Name -->
-                    <div class="flex-1 min-w-0 font-bold truncate noc-group-txt" :title="alert.group">
+                    <!-- Group/Parameter Name — slightly tighter so value+unit fit on one line -->
+                    <div class="flex-1 min-w-0 max-w-[42%] font-bold truncate noc-group-txt" :title="alert.group">
                       {{ alert.group }}
                     </div>
-                    <!-- Display Name (Max 3 chars) -->
-                    <div class="w-[8%] shrink-0 font-semibold truncate text-center noc-display-txt" :title="alert.displayName">
+                    <!-- Axis / display name — empty for air-pressure machines (no axis) -->
+                    <div class="w-[7%] shrink-0 font-semibold truncate text-center noc-display-txt" :title="alert.displayName">
                       {{ alert.displayName }}
                     </div>
-                    <!-- Value & Unit -->
-                    <div class="w-[10%] shrink-0 text-right font-black font-mono noc-value-txt" 
+                    <!-- Value & Unit — keep on one row -->
+                    <div class="w-[22%] shrink-0 text-right font-black font-mono whitespace-nowrap noc-value-txt"
                          :class="{
                            'text-red-500': alert.state === 'CRITICAL',
                            'text-amber-500': alert.state === 'WARNING',
                            'text-slate-400': alert.state === 'DISCONNECTED'
                          }">
-                      {{ alert.value }}
+                      {{ alert.value }}{{ alert.paramDetails?.unit_short_name ? ' ' + alert.paramDetails.unit_short_name : '' }}
                     </div>
                   </div>
                   
@@ -160,8 +155,17 @@
             </div>
             
             <div class="flex items-center gap-5">
+              <button
+                type="button"
+                @click="goToFactoryPollingGrid"
+                class="px-3 py-1.5 rounded-md text-[11px] font-extrabold tracking-wider uppercase transition-all hover:scale-105 active:scale-95 border"
+                :class="panelTheme === 'dark'
+                  ? 'bg-slate-800/80 text-slate-100 border-slate-600 hover:bg-slate-700'
+                  : 'bg-white text-slate-700 border-slate-300 hover:bg-slate-50'"
+              >
+                ← Back
+              </button>
 
-              
               <!-- CMTI Logo at the far right -->
               <div class="h-8 flex items-center justify-center">
                 <img :src="panelTheme === 'dark' ? cmtiLogoWhite : cmtiLogoColor" 
@@ -472,8 +476,11 @@
                     </div>
                   </div>
 
-                  <!-- Rightmost Axis Tag Column (Full Height) -->
-                  <div class="w-[60px] shrink-0 border-l border-dashed flex flex-col items-center justify-center py-1 px-1 bg-slate-500/5 noc-axis-col">
+                  <!-- Rightmost Axis Tag Column (Full Height) — hidden when no axis (air pressure) -->
+                  <div
+                    v-if="param.display_name"
+                    class="w-[60px] shrink-0 border-l border-dashed flex flex-col items-center justify-center py-1 px-1 bg-slate-500/5 noc-axis-col"
+                  >
                     <span class="text-[7px] font-bold uppercase tracking-widest leading-none noc-axis-label">AXIS</span>
                     <span class="text-[18px] font-black font-mono mt-1 leading-none noc-axis-value">
                       {{ param.display_name }}
@@ -867,26 +874,17 @@ const allAlerts = computed(() => {
   const alerts = [];
   uiLinesData.value.forEach(line => {
     (line.machines || []).forEach(m => {
-      // If machine is DISCONNECTED at machine level, add it to alerts
-      if (m.machine_state === 'DISCONNECTED') {
-        alerts.push({
-          machineName: m.machine_name,
-          lineName: m.lineName || line.name,
-          group: 'MACHINE STATUS',
-          displayName: 'DISC',
-          value: 'N/A',
-          state: 'DISCONNECTED',
-          paramDetails: { parameter_state: 'DISCONNECTED', machine_state: 'DISCONNECTED' }
-        });
-      }
-      // Check individual parameters for WARNING/CRITICAL
+      // Check individual parameters for WARNING/CRITICAL only (not DISCONNECTED)
       (m.parameters || []).forEach(p => {
         if (p.parameter_state === 'WARNING' || p.parameter_state === 'CRITICAL') {
           alerts.push({
             machineName: m.machine_name,
             lineName: m.lineName || line.name,
             group: p.parameter_group || 'Unknown Group',
-            displayName: p.display_name || p.actual_parameter_name,
+            // Pressure machines have no axis — never fall back to AIR_PRESSURE / AP
+            displayName: (p.is_pressure_machine || p.parameter_group === 'AIR_PRESSURE')
+              ? ''
+              : (p.display_name || ''),
             value: p.parameter_value !== null ? p.parameter_value : 'N/A',
             state: p.parameter_state,
             paramDetails: p
@@ -896,11 +894,11 @@ const allAlerts = computed(() => {
     });
   });
 
-  // Sort by state (CRITICAL first, then WARNING, then DISCONNECTED), then by machine name
+  // Sort by state (CRITICAL first, then WARNING), then by machine name
   alerts.sort((a, b) => {
-    const statePriority = { 'CRITICAL': 0, 'WARNING': 1, 'DISCONNECTED': 2 };
-    const priorityA = statePriority[a.state] ?? 3;
-    const priorityB = statePriority[b.state] ?? 3;
+    const statePriority = { 'CRITICAL': 0, 'WARNING': 1 };
+    const priorityA = statePriority[a.state] ?? 2;
+    const priorityB = statePriority[b.state] ?? 2;
     if (priorityA !== priorityB) return priorityA - priorityB;
     return a.machineName.localeCompare(b.machineName);
   });
@@ -1030,7 +1028,7 @@ const getTooltipWidth = (text) => {
 
 const shouldShowTooltip = (machine) => {
   if (isLoading.value) return false;
-  if (machine.machine_state === 'WARNING' || machine.machine_state === 'CRITICAL' || machine.machine_state === 'DISCONNECTED') return true;
+  if (machine.machine_state === 'WARNING' || machine.machine_state === 'CRITICAL') return true;
   return hoveredMachine.value === machine.machine_name;
 };
 
@@ -1117,6 +1115,20 @@ const selectedMachineAlerts = computed(() => {
 });
 
 function showMachineDetails(machine) {
+  const pressureParam = machine.is_pressure_machine
+    ? machine.parameters?.[0]
+    : machine.parameters?.find((param) => param.is_pressure_machine);
+
+  if (pressureParam) {
+    logParameterDetails(
+      pressureParam,
+      machine.machine_name,
+      pressureParam.parameter_group || 'AIR_PRESSURE',
+      true
+    );
+    return;
+  }
+
   selectedMachine.value = machine;
 }
 
@@ -1132,11 +1144,27 @@ function getStatusTextColor(state) {
 
 function formatDate(timestamp) {
   if (!timestamp) return 'Just now';
+  if (typeof timestamp === 'string') {
+    return timestamp;
+  }
   return new Date(timestamp).toLocaleTimeString();
 }
 
-function logParameterDetails(param, machineName, parameterGroup) {
-  const details = { machine: machineName, actualParameterName: param.actual_parameter_name, parameterGroup };
+function goToFactoryPollingGrid() {
+  router.push('/factory-level-polling/parameter-overview/grid');
+}
+
+function logParameterDetails(param, machineName, parameterGroup, isPressureMachine = false) {
+  const details = {
+    machine: machineName,
+    actualParameterName: param.actual_parameter_name,
+    parameterGroup: param.parameter_group || parameterGroup,
+    displayName: param.display_name,
+    latest_update_time: param.latest_update_time,
+    latest_update_time_ms: param.latest_update_time_ms,
+    isPressureMachine: isPressureMachine || param.is_pressure_machine === true,
+    is_pressure_machine: isPressureMachine || param.is_pressure_machine === true,
+  };
   machineSamplingWithLimitsStore.setMachineDetails(details);
   machineSamplingWithLimitsStore.setLastSelectedParameter(details);
   navigationHistoryStore.addToHistory(router.currentRoute.value);
@@ -1442,8 +1470,14 @@ onMounted(async () => {
 .noc-display-txt {
   border-right-width: 1px;
   border-right-style: solid;
-  padding-right: 10px;
-  margin-right: 10px;
+  padding-right: 6px;
+  margin-right: 6px;
+}
+
+.noc-value-txt {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* ── DARK THEME STYLING ── */

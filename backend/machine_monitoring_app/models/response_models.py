@@ -603,7 +603,8 @@ class ParameterSchema(BaseModel):
     internal_parameter_name: str = "A0-P1"
     display_name: str = "X"
     actual_parameter_name: str
-    latest_update_time: int
+    latest_update_time: Union[int, str]
+    latest_update_time_ms: Optional[int] = None
     parameter_value: Optional[Union[float, None]]
     parameter_state: str
     warning_limit: Optional[Union[float, None]]
@@ -680,7 +681,8 @@ class Parameter_new(BaseModel):
     actual_parameter_name: str
     display_name: str
     internal_parameter_name: str
-    latest_update_time: int
+    latest_update_time: Union[int, str]
+    latest_update_time_ms: Optional[int] = None
     parameter_value: Union[float, None]
     parameter_state: str
     warning_limit: Union[float, None]
@@ -705,18 +707,22 @@ class new_Parameter(BaseModel):
     actual_parameter_name: str
     display_name: str
     internal_parameter_name: str
-    latest_update_time: int
+    latest_update_time: Union[int, str]
+    latest_update_time_ms: Optional[int] = None
     parameter_value: Optional[float]
     parameter_state: str
     warning_limit: Optional[float]
     critical_limit: Optional[float]
     parameter_group: Optional[str] = None
     parameter_type: Optional[str] = None
+    unit_name: Optional[str] = None
+    unit_short_name: Optional[str] = None
 
 class new_MachineCount(BaseModel):
     OK: int
     WARNING: int
     CRITICAL: int
+    DISCONNECTED: int = 0
 
 
 class new_Machine(BaseModel):
@@ -730,6 +736,7 @@ class new_LineCount(BaseModel):
     OK: int
     WARNING: int
     CRITICAL: int
+    DISCONNECTED: int = 0
 
 
 class new_Line(BaseModel):

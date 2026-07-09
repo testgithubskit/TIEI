@@ -13,7 +13,6 @@ const props = defineProps({
     default: () => [
       { item_name: "item_1", item_state: "OK" },
       { item_name: "item2", item_state: "WARNING" },
-      // ... other items
     ],
   },
   defaultSelectedItem: {
@@ -37,7 +36,6 @@ let filteredItems = ref(itemsMapped.value);
 
 let toggleDropdown = () => {
   isOpen.value = !isOpen.value;
-  // Reset to original items when closing the dropdown
   if (!isOpen.value) {
     filteredItems.value = itemsMapped.value;
     searchTerm.value = "";
@@ -47,7 +45,6 @@ let toggleDropdown = () => {
 const searchItems = () => {
   const query = searchTerm.value.trim();
   if (query === '') {
-    // Show original items when search query is empty
     filteredItems.value = itemsMapped.value;
   } else {
     const pattern = new RegExp(`.*${query}.*`, 'i');
@@ -70,7 +67,6 @@ watch(selectedItem, () => {
 });
 
 watch(itemsMapped, (newItemsMapped) => {
-  // Update filteredItems when itemsMapped changes
   filteredItems.value = newItemsMapped;
   if (props.defaultSelectedItem === null){
     selectedItem.value = newItemsMapped[0];
@@ -78,16 +74,11 @@ watch(itemsMapped, (newItemsMapped) => {
 });
 
 watch(props, (newProps) => {
-  // Update filteredItems when itemsMapped changes=
   selectedItem.value = newProps.defaultSelectedItem;
 });
 
 watch(() => props.defaultSelectedItem, (newProps) => {
-  // Update filteredItems when itemsMapped changes
   selectedItem.value = newProps.defaultSelectedItem;
-  console.log("ibhjasdddddddddddddddddddddddddddddddd");
-  console.log(newProps.defaultSelectedItem);
-  console.log(selectedItem.value);
 });
 
 </script>
@@ -100,7 +91,7 @@ watch(() => props.defaultSelectedItem, (newProps) => {
     >
       <div class="flex justify-between items-center">
         <span class="mr-2">{{ selectedItem ? selectedItem.label : 'Select an item' }}</span>
-        <div class="flex items-center ml-auto"> <!-- ml-auto pushes it to the right -->
+        <div class="flex items-center ml-auto">
           <div v-if="selectedItem"
           :class="[itemBgColor(selectedItem.state), 'w-4 h-4 rounded-full']">
           </div>
@@ -129,7 +120,7 @@ watch(() => props.defaultSelectedItem, (newProps) => {
             />
             <div class="flex items-center">
               <div>{{ item.label }}</div>
-              <div class="flex items-center ml-auto"> <!-- ml-auto pushes it to the right -->
+              <div class="flex items-center ml-auto">
                 <div :class="[itemBgColor(item.state), 'w-4 h-4 rounded-full ml-2']">
                 </div>
               </div>

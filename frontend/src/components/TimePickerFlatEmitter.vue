@@ -8,9 +8,22 @@ const emits = defineEmits();
 
 const date = ref(defaultDatetime);
 
-// Watcher to emit an event when the date value changes
+watch(
+  () => defaultDatetime,
+  (newValue) => {
+    if (!newValue) {
+      return;
+    }
+    const nextMs = new Date(newValue).getTime();
+    const currentMs = new Date(date.value).getTime();
+    if (nextMs !== currentMs) {
+      date.value = newValue;
+    }
+  }
+);
+
 watch(date, (newValue) => {
-  let dateInEpoch = new Date(newValue).getTime();
+  const dateInEpoch = new Date(newValue).getTime();
   emits('date-change', { type, value: dateInEpoch });
 });
 

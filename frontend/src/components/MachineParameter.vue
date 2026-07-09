@@ -23,9 +23,16 @@ const props = defineProps({
     default: "X",
   },
   lastestUpdateTime: {
-    type: Number,
-    default: 1702356875000, //in epoch time stamp in milli seconds
+    type: [Number, String],
+    default: 1702356875000,
   },
+});
+
+const displayUpdateTime = computed(() => {
+  if (typeof props.lastestUpdateTime === 'string') {
+    return props.lastestUpdateTime;
+  }
+  return new Date(props.lastestUpdateTime).toLocaleString();
 });
 
 const bgColor = computed(() => {
@@ -70,7 +77,7 @@ const handleClick = () => {
     >
       <div >{{ props.actualParameterName }}</div>
       <div>Value: {{ props.parameterValue }}</div>
-      <div>Updated Time: {{ new Date(props.lastestUpdateTime).toLocaleString() }}</div>
+      <div>Updated Time: {{ displayUpdateTime }}</div>
     </div>
     </div>
     

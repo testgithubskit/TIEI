@@ -25,7 +25,7 @@ import 'toastify-js/src/toastify.css';
 //Importing Store Statements
 
 import { useFactoryPollOverviewStore } from '@/stores/FactoryPollGridStore'; 
-import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore'; 
+import { useMachineSamplingWithLimitsStore, pressureTimeToEpoch } from '@/stores/MachineSamplingWithLimitsStore'; 
 
 import { useRouter } from 'vue-router';
 
@@ -167,44 +167,36 @@ onBeforeMount(async () => {
   isPageLoading.value = true;
   let groupNameFromRoute = router.currentRoute.value.params.groupName || null;
   await factoryPollOverviewGridStore.fetchInitialPageData();
-   await DatabaseName.fetchSchemaName();
+  await DatabaseName.fetchSchemaName();
   if (groupNameFromRoute !== null) {
-  // Your code here if the variable is not null
-  factoryPollOverviewGridStore.setSelectedGroup(groupNameFromRoute);
-  let groupDetails = factoryPollOverviewGridStore.getGroupDetail(groupNameFromRoute);
-  let informalGroupName = groupNameFromRoute.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
-  let selectedGroupDetails = {"label": informalGroupName, "state": groupDetails.groupState, "value": groupNameFromRoute};
-  initialSelectedParameter.value = selectedGroupDetails;
-} else{
-  const defaultGroupName = "APC_BATTERY";
-  factoryPollOverviewGridStore.setSelectedGroup(defaultGroupName);
-  let groupDetails = factoryPollOverviewGridStore.getGroupDetail(defaultGroupName);
-  let informalGroupName = defaultGroupName.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
-  let selectedGroupDetails = {"label": informalGroupName, "state": groupDetails.groupState, "value": defaultGroupName};
-  initialSelectedParameter.value = selectedGroupDetails;
-  let SchemaName = DatabaseName.schemaName
-
-}
-
+    factoryPollOverviewGridStore.setSelectedGroup(groupNameFromRoute);
+    let groupDetails = factoryPollOverviewGridStore.getGroupDetail(groupNameFromRoute);
+    let informalGroupName = groupNameFromRoute.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+    let selectedGroupDetails = {"label": informalGroupName, "state": groupDetails.groupState, "value": groupNameFromRoute};
+    initialSelectedParameter.value = selectedGroupDetails;
+  } else {
+    const defaultGroupName = "APC_BATTERY";
+    factoryPollOverviewGridStore.setSelectedGroup(defaultGroupName);
+    let groupDetails = factoryPollOverviewGridStore.getGroupDetail(defaultGroupName);
+    let informalGroupName = defaultGroupName.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' ');
+    let selectedGroupDetails = {"label": informalGroupName, "state": groupDetails.groupState, "value": defaultGroupName};
+    initialSelectedParameter.value = selectedGroupDetails;
+  }
 });
 
 const isInitialLoading = ref(true);
 const isParameterChanging = ref(false);
 
 onMounted(async () => {
-  // Show initial loading screen for 5 seconds
   setTimeout(() => {
     isInitialLoading.value = false;
   }, 5000);
 
-  // Check if CYCLE_TIME is selected from the store
   if (factoryPollOverviewGridStore.SelectedParmeter && factoryPollOverviewGridStore.SelectedParmeter.item_name === 'CYCLE_TIME') {
     isCycleTimeSelected.value = true;
   }
 
-  // Create a variable to store the interval ID
   let intervalId;
-  // Only update group data if not CYCLE_TIME
   if (!isCycleTimeSelected.value) {
     factoryPollOverviewGridStore.updateGroupData();
   } else {
@@ -279,7 +271,6 @@ if (selectedItem !== null){
 
   let newSelectedParameter = { item_name: selectedItem.value, item_state: selectedItem.state };
 
-//await factoryPollOverviewGridStore.updateGroupData(selectedItem.value);
   factoryPollOverviewGridStore.SelectedParmeter = newSelectedParameter;
   initialSelectedParameter.value = selectedItem;
 }
@@ -301,18 +292,43 @@ watch(() => factoryPollOverviewGridStore.availableParameters, (newAvailableParam
 });
 
 const handleMachineParameterClick = async (clickedParameter) => {
-  // Perform any necessary actions with the updated parameters
-  machineSamplingWithLimitsStore.machine = clickedParameter.machineName;
-  machineSamplingWithLimitsStore.actualParameterName = clickedParameter.actualParameterName;
+  const selectedGroup = factoryPollOverviewGridStore.SelectedParmeter.item_name;
+  const isPressureClick = (
+    clickedParameter.is_pressure_machine === true
+    || selectedGroup === 'AIR_PRESSURE'
+    || clickedParameter.machineName === '2nd Rough'
+    || clickedParameter.machineName === '4th Finish'
+  );
 
-  // Check if CYCLE_TIME is selected
-  if (factoryPollOverviewGridStore.SelectedParmeter.item_name === 'CYCLE_TIME') {
+  const machineDetails = {
+    machine: clickedParameter.machineName,
+    actualParameterName: isPressureClick ? 'AIR_PRESSURE' : clickedParameter.actualParameterName,
+    parameterGroup: isPressureClick ? 'AIR_PRESSURE' : selectedGroup,
+    displayName: isPressureClick ? '' : (clickedParameter.displayName || ''),
+    isPressureMachine: isPressureClick,
+    is_pressure_machine: isPressureClick,
+    latest_update_time: clickedParameter.latest_update_time,
+    latest_update_time_ms: clickedParameter.latest_update_time_ms,
+  };
+
+  machineSamplingWithLimitsStore.setMachineDetails(machineDetails);
+  machineSamplingWithLimitsStore.setLastSelectedParameter(machineDetails);
+
+  if (selectedGroup === 'CYCLE_TIME') {
     machineSamplingWithLimitsStore.parameterGroup = 'CYCLE_TIME';
     machineSamplingWithLimitsStore.actualParameterName = 'CYCLE_TIME';
-    // Don't fetch regular parameter data for CYCLE_TIME
-    // It will be fetched in MachineLevelSamplingWithLimits component
+    machineSamplingWithLimitsStore.isPressureMachine = false;
+  } else if (isPressureClick) {
+    const latest = pressureTimeToEpoch(clickedParameter.latest_update_time_ms)
+      || pressureTimeToEpoch(clickedParameter.latest_update_time);
+    if (latest) {
+      machineSamplingWithLimitsStore.refreshPressureTimestampAround(latest, 3);
+    } else {
+      machineSamplingWithLimitsStore.refreshPressureTimestamp(3);
+    }
+    await machineSamplingWithLimitsStore.fetchPressureMachineData();
   } else {
-    machineSamplingWithLimitsStore.parameterGroup = factoryPollOverviewGridStore.SelectedParmeter.item_name;
+    machineSamplingWithLimitsStore.isPressureMachine = false;
     machineSamplingWithLimitsStore.refreshTimestamp();
     await machineSamplingWithLimitsStore.fetchMachineParameterData();
   }
@@ -573,6 +589,7 @@ const dashboardButton = computed(() => {
           :lineState="line.line_state"
           :machines="line.machines"
           :count = "line.count"
+          :highlightPressureMachines="factoryPollOverviewGridStore.SelectedParmeter.item_name === 'AIR_PRESSURE'"
           @machine-parameter-clicked="handleMachineParameterClick"
         >
         </ProductionLine>
