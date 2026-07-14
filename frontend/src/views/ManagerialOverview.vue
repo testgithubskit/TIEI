@@ -313,13 +313,14 @@
                     transition: 'transform 0.2s cubic-bezier(0.34, 1.56, 0.64, 1)'
                   }"
                 >
-                  <!-- Machine Image (sitting on platform) -->
+                  <!-- Machine Image — mch1 scaled up at rest to match mch visual weight -->
                   <image 
-                    :href="machineSvg"
-                    :x="getMachineX(machine)"
-                    :y="getMachineY(machine)"
-                    :width="CONFIG.machineWidth"
-                    :height="CONFIG.machineHeight"
+                    :href="getMachineIcon(machine)"
+                    :x="getMachineIconX(machine)"
+                    :y="getMachineIconY(machine)"
+                    :width="getMachineIconWidth(machine)"
+                    :height="getMachineIconHeight(machine)"
+                    preserveAspectRatio="xMidYMid meet"
                     :class="{ 'loading-machine': isLoading }"
                     :style="{ 
                       filter: isLoading ? 'grayscale(0.5) contrast(0.9)' : (CONFIG.useFilters ? (getMachineFilter(machine.machine_state) || '') : 'none')
@@ -540,6 +541,7 @@ import { useRouter } from 'vue-router';
 // LAYOUT & APIS
 import LayoutGuest from "@/layouts/LayoutGuest.vue";
 import machineSvg from '@/assets/shopfloor/mch.svg';
+import machineHonSvg from '@/assets/shopfloor/mch1.svg';
 import tieiLogo from '@/assets/shopfloor/TIEI_Logo.png';
 import cmtiLogoColor from '@/assets/shopfloor/CMTI Logo.png';
 import cmtiLogoWhite from '@/assets/shopfloor/cmti_logo white.png';
@@ -1086,6 +1088,39 @@ function getLineDotClass(name) {
 function formatMachineName(name) {
   if (!name) return '';
   return name.startsWith('T_') ? name.substring(2) : name;
+}
+
+function getMachineIcon(machine) {
+  return isAirHoningMachine(machine) ? machineHonSvg : machineSvg;
+}
+
+function getHoningIconScale() {
+  return CONFIG.honingIconScale ?? CONFIG.hoverScale ?? 1.15;
+}
+
+function getMachineIconWidth(machine) {
+  const scale = isAirHoningMachine(machine) ? getHoningIconScale() : 1;
+  return CONFIG.machineWidth * scale;
+}
+
+function getMachineIconHeight(machine) {
+  const scale = isAirHoningMachine(machine) ? getHoningIconScale() : 1;
+  return CONFIG.machineHeight * scale;
+}
+
+function getMachineIconX(machine) {
+  return getMachineX(machine) + (CONFIG.machineWidth - getMachineIconWidth(machine)) / 2;
+}
+
+function getMachineIconY(machine) {
+  return getMachineY(machine) + (CONFIG.machineHeight - getMachineIconHeight(machine)) / 2;
+}
+
+function isAirHoningMachine(machine) {
+  return machine?.is_pressure_machine === true
+    || machine?.machine_name === '2nd Rough'
+    || machine?.machine_name === '4th Finish'
+    || (machine?.parameters || []).some((p) => p.is_pressure_machine || p.parameter_group === 'AIR_PRESSURE');
 }
 
 function getLineAccentClass(name) {

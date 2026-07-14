@@ -48,6 +48,8 @@ export const CONFIG = {
   machineWidth: 75,
   machineHeight: 75,
   machineAnchorYPercent: 0.30,
+  // Air honing (mch1) art is lighter — scale up at rest to match mch.svg visual size
+  honingIconScale: 1.15,
 
   // ── Coordinate Offsets ──────────────────────────────────
   machineGridUOffset: 0.5,

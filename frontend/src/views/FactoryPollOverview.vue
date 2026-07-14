@@ -26,6 +26,7 @@ import 'toastify-js/src/toastify.css';
 
 import { useFactoryPollOverviewStore } from '@/stores/FactoryPollGridStore'; 
 import { useMachineSamplingWithLimitsStore, pressureTimeToEpoch } from '@/stores/MachineSamplingWithLimitsStore'; 
+import { useNavigationHistoryStore } from '@/stores/navigationHistoryStore';
 
 import { useRouter } from 'vue-router';
 
@@ -37,6 +38,7 @@ const router = useRouter();
 const route = useRoute();
 const factoryPollOverviewGridStore = useFactoryPollOverviewStore();
 const machineSamplingWithLimitsStore = useMachineSamplingWithLimitsStore();
+const navigationHistoryStore = useNavigationHistoryStore();
 const DatabaseName = useDatabaseName();
 const isPageLoading = ref(true);
 
@@ -313,6 +315,7 @@ const handleMachineParameterClick = async (clickedParameter) => {
 
   machineSamplingWithLimitsStore.setMachineDetails(machineDetails);
   machineSamplingWithLimitsStore.setLastSelectedParameter(machineDetails);
+  navigationHistoryStore.addToHistory(router.currentRoute.value);
 
   if (selectedGroup === 'CYCLE_TIME') {
     machineSamplingWithLimitsStore.parameterGroup = 'CYCLE_TIME';
@@ -322,9 +325,9 @@ const handleMachineParameterClick = async (clickedParameter) => {
     const latest = pressureTimeToEpoch(clickedParameter.latest_update_time_ms)
       || pressureTimeToEpoch(clickedParameter.latest_update_time);
     if (latest) {
-      machineSamplingWithLimitsStore.refreshPressureTimestampAround(latest, 3);
+      machineSamplingWithLimitsStore.refreshPressureTimestampAround(latest, 60);
     } else {
-      machineSamplingWithLimitsStore.refreshPressureTimestamp(3);
+      machineSamplingWithLimitsStore.refreshPressureTimestamp(60);
     }
     await machineSamplingWithLimitsStore.fetchPressureMachineData();
   } else {
@@ -452,31 +455,26 @@ const dashboardButton = computed(() => {
 
     <SectionMain>
       <div class="container mx-auto flex flex-col space-y-1">
-        <!-- Update the button here -->
-        <!-- <div class="flex justify-end ">
-          <Tooltip :title="dashboardButton.text">
-            <a
-              :href="dashboardButton.link"
-              target="_blank"
-              rel="noopener noreferrer"
-              class="inline-flex items-center px-4 py-2 border border-transparent text-sm font-medium rounded-md shadow-sm text-white bg-blue-600  focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 hover:bg-emerald-600 hover:scale-105 transition-all"
-            >
-              {{ dashboardButton.text }}
-              <RightCircleOutlined class="ml-2" />
-            </a>
-          </Tooltip>
-        </div> -->
-
         <div class="w-8 h-8">
           <!-- Add your loading SVG icon here -->
           <img v-if="isLoading" src="@\assets\gifs\Loading.gif" alt="Loading...">
         </div>
-        
-        <ParameterWithDropDown class="col-span-3"  :icon="mdiChartTimelineVariant" title="Parameter:" main>
+
+        <ParameterWithDropDown class="col-span-3" :icon="mdiChartTimelineVariant" title="Parameter:" main>
+          <div class="flex items-center gap-3">
             <StatefulDropdownSingleSelect 
-            @item-selected-update-parameter="handleSelectedParameterUpdate" 
-            :items="availableParameters"
-            :defaultSelectedItem="initialSelectedParameter" />
+              @item-selected-update-parameter="handleSelectedParameterUpdate" 
+              :items="availableParameters"
+              :defaultSelectedItem="initialSelectedParameter" />
+            <button
+              type="button"
+              @click="router.push('/managerialOverview')"
+              class="inline-flex items-center px-4 py-2 text-sm font-medium rounded-md shadow-sm text-white bg-emerald-600 hover:bg-emerald-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-emerald-500 transition-all shrink-0"
+            >
+              Manager Dashboard
+              <RightCircleOutlined class="ml-2" />
+            </button>
+          </div>
         </ParameterWithDropDown>
 
         <BlurryHorizontalDivider />

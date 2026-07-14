@@ -6,8 +6,18 @@ export const useNavigationHistoryStore = defineStore('navigationHistory', {
   }),
   actions: {
     addToHistory(route) {
-      this.history.push(route);
-      console.log("Added to history:", route);
+      // Store a plain snapshot — reactive RouteLocation can become unusable / point to "/"
+      const snapshot = {
+        path: route?.path || '',
+        fullPath: route?.fullPath || route?.path || '',
+        name: route?.name || null,
+      };
+      if (!snapshot.path || snapshot.path === '/' || String(snapshot.path).toLowerCase().includes('login')) {
+        console.warn('Skipped adding login/root route to history:', snapshot);
+        return;
+      }
+      this.history.push(snapshot);
+      console.log("Added to history:", snapshot);
     },
     getPreviousRoute() {
       const previousRoute = this.history.length > 1 ? this.history[this.history.length - 2] : null;

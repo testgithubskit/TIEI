@@ -3,38 +3,78 @@ import { ref, watch, defineProps, defineEmits } from 'vue';
 import flatPickr from 'vue-flatpickr-component';
 import 'flatpickr/dist/flatpickr.css';
 
-const { defaultDatetime, type } = defineProps(['defaultDatetime', 'type']);
-const emits = defineEmits();
+const props = defineProps({
+  defaultDatetime: {
+    type: [Date, String, Number],
+    required: true,
+  },
+  type: {
+    type: String,
+    default: 'from',
+  },
+});
 
-const date = ref(defaultDatetime);
+const emits = defineEmits(['date-change']);
+
+const date = ref(props.defaultDatetime ? new Date(props.defaultDatetime) : new Date());
+let syncingFromParent = false;
+
+function toEpoch(value) {
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** Parent can call this on Submit to read the picker value reliably */
+function getEpoch() {
+  return toEpoch(date.value);
+}
+
+defineExpose({ getEpoch });
 
 watch(
-  () => defaultDatetime,
+  () => props.defaultDatetime,
   (newValue) => {
-    if (!newValue) {
+    if (newValue == null || newValue === '') {
       return;
     }
-    const nextMs = new Date(newValue).getTime();
-    const currentMs = new Date(date.value).getTime();
-    if (nextMs !== currentMs) {
-      date.value = newValue;
+    const nextMs = toEpoch(newValue);
+    const currentMs = toEpoch(date.value);
+    if (nextMs == null || nextMs === currentMs) {
+      return;
     }
-  }
+    syncingFromParent = true;
+    date.value = new Date(nextMs);
+    queueMicrotask(() => {
+      syncingFromParent = false;
+    });
+  },
+  { immediate: true }
 );
 
 watch(date, (newValue) => {
-  const dateInEpoch = new Date(newValue).getTime();
-  emits('date-change', { type, value: dateInEpoch });
+  if (syncingFromParent) {
+    return;
+  }
+  const epoch = toEpoch(newValue);
+  if (epoch == null) {
+    return;
+  }
+  emits('date-change', { type: props.type, value: epoch });
 });
 
 const configuration = {
   enableTime: true,
-  defaultDate: defaultDatetime,
   enableSeconds: true,
+  time_24hr: true,
+  allowInput: true,
+  dateFormat: 'Y-m-d H:i:S',
 };
-
 </script>
 
 <template>
-  <flat-pickr class="border-2 border-black rounded-lg" v-model="date" :config="configuration" />
+  <flat-pickr
+    class="border-2 border-black rounded-lg"
+    v-model="date"
+    :config="configuration"
+  />
 </template>

@@ -30,7 +30,12 @@ import { useNavigationHistoryStore } from '@/stores/navigationHistoryStore';
 
 //Importing Store Statements
 
-import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore'; 
+import {
+  useMachineSamplingWithLimitsStore,
+  PRESSURE_DEFAULT_RANGE_SECONDS,
+  PRESSURE_FALLBACK_MIN_SECONDS,
+  PRESSURE_FALLBACK_MAX_SECONDS,
+} from '@/stores/MachineSamplingWithLimitsStore'; 
 // import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore';
 
 import { useActivityStore } from '@/stores/ActivityStore.js'; 
@@ -160,7 +165,14 @@ let chartData = computed(() => {
 
 const hasChartData = computed(() => {
   const data = machineSamplingWithLimitsStore.chartData;
-  return Array.isArray(data) && data.length > 0;
+  if (!Array.isArray(data) || data.length === 0) {
+    return false;
+  }
+  // Store uses [[0, 0]] as an error placeholder
+  if (data.length === 1 && Number(data[0]?.[0]) === 0 && Number(data[0]?.[1]) === 0) {
+    return false;
+  }
+  return true;
 });
 
 let warningLimit = computed(() => {
@@ -192,14 +204,26 @@ function resolveIsPressure() {
   );
 }
 
-function initializePressureDates() {
+function initializePressureDates({ forceRefreshDates = false } = {}) {
   machineSamplingWithLimitsStore.isPressureMachine = true;
   if (machineSamplingWithLimitsStore.lastSelectedParameter) {
-    machineSamplingWithLimitsStore.setMachineDetails(machineSamplingWithLimitsStore.lastSelectedParameter);
-  } else {
-    machineSamplingWithLimitsStore.refreshPressureTimestamp(3);
+    machineSamplingWithLimitsStore.setMachineDetails({
+      ...machineSamplingWithLimitsStore.lastSelectedParameter,
+      // Do not wipe From/To the user (or session) already chose
+      initializePressureDates: forceRefreshDates,
+    });
+  } else if (forceRefreshDates) {
+    machineSamplingWithLimitsStore.refreshPressureTimestamp(PRESSURE_DEFAULT_RANGE_SECONDS);
   }
 }
+
+function formatPressureMaxHint() {
+  const maxSeconds = machineSamplingWithLimitsStore.pressureRangeLimits.max ?? PRESSURE_FALLBACK_MAX_SECONDS;
+  return `${Math.round(maxSeconds / 86400)} day(s)`;
+}
+
+const fromPickerRef = ref(null);
+const toPickerRef = ref(null);
 
 const fromPickerDatetime = computed(() => {
   if (resolveIsPressure()) {
@@ -215,6 +239,19 @@ const toPickerDatetime = computed(() => {
   return new Date();
 });
 
+/** Always sync store From/To from the visible pickers before API call */
+function syncDatesFromPickers() {
+  const fromEpoch = fromPickerRef.value?.getEpoch?.();
+  const toEpoch = toPickerRef.value?.getEpoch?.();
+  if (Number.isFinite(fromEpoch)) {
+    machineSamplingWithLimitsStore.selectedDates.from = fromEpoch;
+  }
+  if (Number.isFinite(toEpoch)) {
+    machineSamplingWithLimitsStore.selectedDates.to = toEpoch;
+  }
+  machineSamplingWithLimitsStore.normalizeInvertedPressureTimeRange();
+}
+
 const handleQuerySubmit = async () => {
   if (isCycleTimeSelected.value) {
     await handleCycleTimeSubmit();
@@ -222,14 +259,14 @@ const handleQuerySubmit = async () => {
   }
 
   if (isPressureSelected.value || (machineSamplingWithLimitsStore.actualParameterName || '').toUpperCase() === 'AIR_PRESSURE') {
-    machineSamplingWithLimitsStore.normalizeInvertedPressureTimeRange();
+    syncDatesFromPickers();
     const timeDifferenceSeconds = machineSamplingWithLimitsStore.pressureRangeSeconds;
-    const minSeconds = machineSamplingWithLimitsStore.pressureRangeLimits.min ?? 1;
-    const maxSeconds = machineSamplingWithLimitsStore.pressureRangeLimits.max ?? 3;
+    const minSeconds = machineSamplingWithLimitsStore.pressureRangeLimits.min ?? PRESSURE_FALLBACK_MIN_SECONDS;
+    const maxSeconds = machineSamplingWithLimitsStore.pressureRangeLimits.max ?? PRESSURE_FALLBACK_MAX_SECONDS;
 
-    if (timeDifferenceSeconds < minSeconds || timeDifferenceSeconds > maxSeconds) {
+    if (timeDifferenceSeconds == null || timeDifferenceSeconds < minSeconds || timeDifferenceSeconds > maxSeconds) {
       Toastify({
-        text: `For Air Pressure, select a time range between ${minSeconds} and ${maxSeconds} seconds`,
+        text: `For Air Pressure, select a time range between ${minSeconds} second(s) and ${formatPressureMaxHint()}.`,
         duration: 5000,
         close: true,
         gravity: 'top',
@@ -239,10 +276,12 @@ const handleQuerySubmit = async () => {
       return;
     }
 
+    machineSamplingWithLimitsStore.persistSamplingSession();
     await machineSamplingWithLimitsStore.fetchPressureMachineData();
     return;
   }
 
+  syncDatesFromPickers();
   const sixHoursInMillis = 6 * 60 * 60 * 1000;
   const timeDifference = machineSamplingWithLimitsStore.selectedDates.to - machineSamplingWithLimitsStore.selectedDates.from;
 
@@ -279,22 +318,58 @@ const handleQuerySubmitActivity = async () => {
 // const router = useRouter();
 const navigationHistoryStore = useNavigationHistoryStore()
 
-
 const handleBack = () => {
-  window.location.href = 'http://172.18.100.87:5173/tiei_dynamic/#/factory-level-polling/parameter-overview/grid';
+  // Prefer the page we came from (managerial overview OR factory grid).
+  // Never go to login ("/") — that feels like a logout.
+  const previous = navigationHistoryStore.history.length
+    ? navigationHistoryStore.history[navigationHistoryStore.history.length - 1]
+    : null;
+
+  const candidate = previous?.fullPath || previous?.path || '';
+  const isLoginLike = (
+    !candidate
+    || candidate === '/'
+    || candidate === '/#/'
+    || candidate === '/#/'
+    || String(candidate).toLowerCase().includes('login')
+  );
+  const isSelf = candidate.includes('machine-level-sampling');
+
+  if (!isLoginLike && !isSelf) {
+    navigationHistoryStore.removeLastRoute();
+    router.push(candidate);
+    return;
+  }
+
+  // Safe fallbacks (never "/")
+  if (resolveIsPressure()) {
+    router.push('/managerialOverview');
+    return;
+  }
+  router.push('/factory-level-polling/parameter-overview/grid');
 };
 
 const handleFromDateChange = (dateValue) => {
   machineSamplingWithLimitsStore.selectedDates.from = dateValue.value;
+  machineSamplingWithLimitsStore.persistSamplingSession();
 };
 
 const handleToDateChange = (dateValue) => {
   machineSamplingWithLimitsStore.selectedDates.to = dateValue.value;
+  machineSamplingWithLimitsStore.persistSamplingSession();
 };
 
 onBeforeMount(() => {
+  if (!machineSamplingWithLimitsStore.lastSelectedParameter) {
+    machineSamplingWithLimitsStore.restoreSamplingSession();
+  }
   if (resolveIsPressure()) {
-    initializePressureDates();
+    // Only set default window if we don't already have a valid saved From/To
+    const hasDates = Number.isFinite(Number(machineSamplingWithLimitsStore.selectedDates.from))
+      && Number.isFinite(Number(machineSamplingWithLimitsStore.selectedDates.to))
+      && Number(machineSamplingWithLimitsStore.selectedDates.to)
+        > Number(machineSamplingWithLimitsStore.selectedDates.from);
+    initializePressureDates({ forceRefreshDates: !hasDates });
   }
 });
 
@@ -315,6 +390,11 @@ function convertEpochToLocal(epochTimestamp) {
 const currentParameter = ref(null);
 
 onMounted(async () => {
+  // Restore last machine/parameter if page was refreshed (otherwise defaults to T_H_OP150)
+  if (!machineSamplingWithLimitsStore.lastSelectedParameter) {
+    machineSamplingWithLimitsStore.restoreSamplingSession();
+  }
+
   const isCycleTimeFromStorage = localStorage.getItem('isCycleTimeSelected') === 'true';
   const isPressure = resolveIsPressure();
 
@@ -611,23 +691,33 @@ function OnHoverCallBack(hoverData){
         <div class="flex justify-normal">
           <div>
             <label class="block mb-2 text-gray-700">From</label>
-            <TimePickerFlatEmitter :defaultDatetime="fromPickerDatetime" type="from" @date-change="handleFromDateChange" />
+            <TimePickerFlatEmitter
+              ref="fromPickerRef"
+              :defaultDatetime="fromPickerDatetime"
+              type="from"
+              @date-change="handleFromDateChange"
+            />
           </div>
 
           <div class="ml-8">
             <label class="block mb-2 text-gray-700">To</label>
-            <TimePickerFlatEmitter :defaultDatetime="toPickerDatetime" type="to" @date-change="handleToDateChange" />
+            <TimePickerFlatEmitter
+              ref="toPickerRef"
+              :defaultDatetime="toPickerDatetime"
+              type="to"
+              @date-change="handleToDateChange"
+            />
           </div>
 
           <div class="flex flex-col items-center justify-end ml-8">
             <BaseButton type="submit" color="info" label="Submit" @click="handleQuerySubmit" />
           </div>
 
-          <div v-if="isPressureSelected" class="ml-8 flex flex-col justify-center max-w-xs">
+          <div v-if="isPressureSelected" class="ml-8 flex flex-col justify-center max-w-md">
             <p class="text-sm text-amber-700">
-              Select a time range between
-              {{ machineSamplingWithLimitsStore.pressureRangeLimits.min ?? 1 }} and
-              {{ machineSamplingWithLimitsStore.pressureRangeLimits.max ?? 3 }} seconds.
+              Choose any From / To (1s–{{ formatPressureMaxHint() }}), then Submit.
+              Graph shows only data that exists in that range (demo DB ≈ 9s for 2nd Rough).
+              Scroll or drag on the chart to zoom the loaded points.
             </p>
           </div>
 
@@ -685,16 +775,16 @@ function OnHoverCallBack(hoverData){
             <p class="font-semibold text-yellow-800">
               {{ machineSamplingWithLimitsStore.chartFetchMessage || 'No air pressure data available for the selected time range.' }}
             </p>
-            <p class="text-sm text-yellow-700">
-              Select a window of 1–3 seconds around the machine's latest reading time.
+            <p v-if="isPressureSelected" class="text-sm text-yellow-700">
+              Try a different From / To window where sensor data exists in the database.
             </p>
           </div>
-          <div v-else>
+          <div v-else class="min-h-[440px]">
             <DyLineChartWithLimits
               :data="chartData"
               :warningLimit="warningLimit"
               :criticalLimit="criticalLimit"
-              class="h-96"
+              :step-plot="!isPressureSelected"
               @data-hovered="OnHoverCallBack"
             />
           </div>

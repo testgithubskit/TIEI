@@ -50,7 +50,8 @@ const dashboardButton = computed(() => {
   } else {
     return {
       text: "Open Dashboard",
-      link: "https://localhost:5173/tiei_dynamic/"
+      // Same host as current app — avoid localhost redirect from 172.x which looks like logout
+      link: `${window.location.origin}${import.meta.env.BASE_URL || '/'}#/factory-level-polling/parameter-overview/grid`,
     };
   }
 });

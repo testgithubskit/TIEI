@@ -84,18 +84,21 @@ PRESSURE_PARAMETER_NAME = "AIR_PRESSURE"
 PRESSURE_DISPLAY_NAME = "Air Pressure"
 PRESSURE_LINE_NAME = "BLOCK"
 PRESSURE_MIN_RANGE_SECONDS = 1
-PRESSURE_MAX_RANGE_SECONDS = 3
-PRESSURE_MAX_CHART_POINTS = 120
+PRESSURE_MAX_RANGE_SECONDS = 365 * 24 * 3600  # up to 1 year
+PRESSURE_MAX_CHART_POINTS = 2000
+PRESSURE_DEFAULT_CHART_POINTS = 1500
 PRESSURE_DB_TIMEZONE = pytz.timezone('Asia/Kolkata')
+# Sensor reading time column (not created_at — that is ingest time and identical per batch).
+PRESSURE_SENSOR_TIME_COL = '"timestamp"'
 
 
-def _pressure_dt_to_epoch_ms(created_at):
+def _pressure_dt_to_epoch_ms(reading_dt):
     """Treat naive DB timestamps as Asia/Kolkata wall-clock time."""
-    if created_at is None:
+    if reading_dt is None:
         return 0
-    if created_at.tzinfo is None:
-        created_at = PRESSURE_DB_TIMEZONE.localize(created_at)
-    return int(created_at.timestamp() * 1000)
+    if reading_dt.tzinfo is None:
+        reading_dt = PRESSURE_DB_TIMEZONE.localize(reading_dt)
+    return int(reading_dt.timestamp() * 1000)
 
 
 def _epoch_ms_to_pressure_dt(epoch_ms):
@@ -117,7 +120,7 @@ def _format_pressure_ist_datetime(dt):
 
 
 def _pressure_sql_time_bounds(start_ms, end_ms):
-    """Build naive IST bounds matching pressure_sensor_data.created_at storage."""
+    """Build naive IST bounds matching pressure_sensor_data.timestamp storage."""
     start_dt = _epoch_ms_to_pressure_dt(start_ms)
     end_dt = _epoch_ms_to_pressure_dt(end_ms)
     # Include the full end second (DB rows often have sub-second microseconds).
@@ -125,45 +128,168 @@ def _pressure_sql_time_bounds(start_ms, end_ms):
     return start_dt, end_dt
 
 
-def _downsample_pressure_chart_data(chart_data, max_points=PRESSURE_MAX_CHART_POINTS):
-    if len(chart_data) <= max_points:
-        return chart_data
-    step = len(chart_data) / max_points
-    return [chart_data[int(i * step)] for i in range(max_points)]
+def _clamp_pressure_max_points(max_points=None):
+    if max_points is None:
+        return PRESSURE_DEFAULT_CHART_POINTS
+    try:
+        value = int(max_points)
+    except (TypeError, ValueError):
+        return PRESSURE_DEFAULT_CHART_POINTS
+    return max(50, min(value, PRESSURE_MAX_CHART_POINTS))
 
 
-def _build_pressure_chart_data(sensor_rows, start_ms, end_ms):
+def _lttb_downsample_pressure(points, max_points):
     """
-    Return [IST datetime string, pressure_value] spread across the selected filter window.
-    Rows are selected by created_at; values come from DB; x-axis times match startTime/endTime.
+    Largest-Triangle-Three-Buckets downsampling.
+    `points` is a list of [x_ms:number, y:number] sorted by x.
+    Preserves shape better than uniform stride for dense sensor streams.
     """
-    rows = [
-        (reading_ts, pressure_value)
-        for reading_ts, pressure_value in sensor_rows
-        if reading_ts is not None
-    ]
-    if not rows:
+    n = len(points)
+    if n <= max_points or max_points < 3:
+        return points
+
+    sampled = [points[0]]
+    bucket_size = (n - 2) / (max_points - 2)
+    a = 0
+
+    for i in range(max_points - 2):
+        avg_range_start = int(math.floor((i + 1) * bucket_size)) + 1
+        avg_range_end = int(math.floor((i + 2) * bucket_size)) + 1
+        avg_range_end = min(avg_range_end, n)
+
+        avg_x = 0.0
+        avg_y = 0.0
+        avg_range_length = avg_range_end - avg_range_start
+        if avg_range_length <= 0:
+            avg_range_start = min(avg_range_start, n - 1)
+            avg_range_end = avg_range_start + 1
+            avg_range_length = 1
+
+        for j in range(avg_range_start, avg_range_end):
+            avg_x += points[j][0]
+            avg_y += points[j][1]
+        avg_x /= avg_range_length
+        avg_y /= avg_range_length
+
+        range_offs = int(math.floor(i * bucket_size)) + 1
+        range_to = int(math.floor((i + 1) * bucket_size)) + 1
+        range_to = min(range_to, n - 1)
+
+        point_ax = points[a][0]
+        point_ay = points[a][1]
+        max_area = -1.0
+        next_a = range_offs
+
+        for j in range(range_offs, range_to):
+            area = abs(
+                (point_ax - avg_x) * (points[j][1] - point_ay)
+                - (point_ax - points[j][0]) * (avg_y - point_ay)
+            ) * 0.5
+            if area > max_area:
+                max_area = area
+                next_a = j
+
+        sampled.append(points[next_a])
+        a = next_a
+
+    sampled.append(points[-1])
+    return sampled
+
+
+def _pressure_points_from_rows(sensor_rows):
+    """Convert DB rows (timestamp, pressure_value) → [[epoch_ms, value], ...]."""
+    points = []
+    for reading_ts, pressure_value in sensor_rows:
+        if reading_ts is None or pressure_value is None:
+            continue
+        points.append([_pressure_dt_to_epoch_ms(reading_ts), float(pressure_value)])
+    return points
+
+
+def _build_pressure_chart_data(sensor_rows, max_points=None):
+    """Return [[epoch_ms, pressure_value], ...] with true reading timestamps + LTTB if needed."""
+    max_points = _clamp_pressure_max_points(max_points)
+    points = _pressure_points_from_rows(sensor_rows)
+    if not points:
         return []
+    return _lttb_downsample_pressure(points, max_points)
 
-    reading_epochs = [_pressure_dt_to_epoch_ms(ts) for ts, _ in rows]
-    min_reading = min(reading_epochs)
-    max_reading = max(reading_epochs)
-    window_ms = end_ms - start_ms
-    n = len(rows)
 
-    chart_data = []
-    for idx, (reading_ts, pressure_value) in enumerate(rows):
-        if n == 1:
-            ratio = 0.0
-        elif max_reading > min_reading:
-            ratio = (reading_epochs[idx] - min_reading) / (max_reading - min_reading)
-        else:
-            ratio = idx / (n - 1)
-        plotted_ms = start_ms + ratio * window_ms
-        plotted_dt = _epoch_ms_to_pressure_dt(plotted_ms)
-        chart_data.append([_format_pressure_ist_datetime(plotted_dt), pressure_value])
+def _fetch_pressure_timeline_points(machine_id, start_ts, end_ts, start_ms, end_ms, max_points):
+    """
+    Load pressure points safely for large windows.
+    - If row count fits in max_points: return raw rows (true timestamps).
+    - Else: aggregate in SQL by time bucket (avg) so year-scale queries stay bounded.
+    """
+    max_points = _clamp_pressure_max_points(max_points)
+    time_col = PRESSURE_SENSOR_TIME_COL
+    probe_query = f"""
+        SELECT COUNT(*) FROM (
+            SELECT 1
+            FROM {schema_name}.pressure_sensor_data
+            WHERE machine_id = {machine_id}
+              AND {time_col} >= TIMESTAMP '{start_ts}'
+              AND {time_col} <= TIMESTAMP '{end_ts}'
+            LIMIT {max_points + 1}
+        ) probe
+    """
+    probe_rows = _execute_raw_sql(probe_query)
+    probe_count = int(probe_rows[0][0]) if probe_rows else 0
 
-    return _downsample_pressure_chart_data(chart_data)
+    if probe_count <= max_points:
+        data_query = f"""
+            SELECT {time_col}, pressure_value
+            FROM {schema_name}.pressure_sensor_data
+            WHERE machine_id = {machine_id}
+              AND {time_col} >= TIMESTAMP '{start_ts}'
+              AND {time_col} <= TIMESTAMP '{end_ts}'
+            ORDER BY {time_col} ASC
+        """
+        sensor_rows = _execute_raw_sql(data_query)
+        points = _build_pressure_chart_data(sensor_rows, max_points)
+        return points, probe_count, False
+
+    # width_bucket on sensor timestamp — keeps IST wall-clock, avoids TZ quirks.
+    bucket_query = f"""
+        WITH filtered AS (
+            SELECT {time_col} AS reading_ts, pressure_value
+            FROM {schema_name}.pressure_sensor_data
+            WHERE machine_id = {machine_id}
+              AND {time_col} >= TIMESTAMP '{start_ts}'
+              AND {time_col} <= TIMESTAMP '{end_ts}'
+        ),
+        bounds AS (
+            SELECT
+                EXTRACT(EPOCH FROM MIN(reading_ts)) AS e0,
+                EXTRACT(EPOCH FROM MAX(reading_ts)) AS e1
+            FROM filtered
+        )
+        SELECT
+            MIN(f.reading_ts) AS bucket_ts,
+            AVG(f.pressure_value) AS pressure_value
+        FROM filtered f
+        CROSS JOIN bounds b
+        WHERE b.e0 IS NOT NULL AND b.e1 IS NOT NULL
+        GROUP BY width_bucket(
+            EXTRACT(EPOCH FROM f.reading_ts),
+            b.e0,
+            b.e1 + 1e-6,
+            {max_points}
+        )
+        ORDER BY 1
+    """
+    bucket_rows = _execute_raw_sql(bucket_query)
+    points = []
+    for bucket_ts, pressure_value in bucket_rows:
+        if bucket_ts is None or pressure_value is None:
+            continue
+        if getattr(bucket_ts, 'tzinfo', None) is not None:
+            bucket_ts = bucket_ts.astimezone(PRESSURE_DB_TIMEZONE).replace(tzinfo=None)
+        points.append([_pressure_dt_to_epoch_ms(bucket_ts), float(pressure_value)])
+
+    # Safety: LTTB again if SQL somehow overshoots.
+    points = _lttb_downsample_pressure(points, max_points)
+    return points, None, True
 
 
 def parse_pressure_time_param(value) -> float:
@@ -233,22 +359,22 @@ def _get_pressure_parameter_state(value, warning_limit, critical_limit):
 
 
 def _fetch_pressure_machine_rows():
-    """Latest row per machine: max created_at, then max timestamp within that batch."""
+    """Latest reading per machine ordered by sensor timestamp."""
     query = f"""
         SELECT pmm.id,
                pmm.machine_name,
                pmm.warning_limit,
                pmm.critical_limit,
                latest.pressure_value,
-               latest.created_at
+               latest.reading_ts
         FROM {schema_name}.pressure_monitoring_machine pmm
         LEFT JOIN (
             SELECT DISTINCT ON (machine_id)
                    machine_id,
                    pressure_value,
-                   created_at
+                   {PRESSURE_SENSOR_TIME_COL} AS reading_ts
             FROM {schema_name}.pressure_sensor_data
-            ORDER BY machine_id, created_at DESC NULLS LAST, "timestamp" DESC NULLS LAST
+            ORDER BY machine_id, {PRESSURE_SENSOR_TIME_COL} DESC NULLS LAST
         ) latest ON latest.machine_id = pmm.id
         ORDER BY pmm.id
     """
@@ -256,12 +382,12 @@ def _fetch_pressure_machine_rows():
 
 
 def _build_pressure_machine_json(machine_id, machine_name, warning_limit, critical_limit,
-                                 pressure_value, created_at):
+                                 pressure_value, reading_ts):
     parameter_state = _get_pressure_parameter_state(
         pressure_value, warning_limit, critical_limit
     )
-    latest_update_time_ms = _pressure_dt_to_epoch_ms(created_at)
-    latest_update_time_ist = _format_pressure_ist_datetime(created_at) if created_at else None
+    latest_update_time_ms = _pressure_dt_to_epoch_ms(reading_ts)
+    latest_update_time_ist = _format_pressure_ist_datetime(reading_ts) if reading_ts else None
     machine_count = {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}
     machine_count[parameter_state] = 1
 
@@ -299,10 +425,10 @@ def _merge_pressure_machines_into_lines(lines):
 
     pressure_machines = []
     for row in pressure_rows:
-        machine_id, machine_name, warning_limit, critical_limit, pressure_value, created_at = row
+        machine_id, machine_name, warning_limit, critical_limit, pressure_value, reading_ts = row
         pressure_machines.append(
             _build_pressure_machine_json(
-                machine_id, machine_name, warning_limit, critical_limit, pressure_value, created_at
+                machine_id, machine_name, warning_limit, critical_limit, pressure_value, reading_ts
             )
         )
 
@@ -372,9 +498,9 @@ def get_pressure_monitoring_group_details():
     }
 
     for row in pressure_rows:
-        machine_id, machine_name, warning_limit, critical_limit, pressure_value, created_at = row
+        machine_id, machine_name, warning_limit, critical_limit, pressure_value, reading_ts = row
         machine_json = _build_pressure_machine_json(
-            machine_id, machine_name, warning_limit, critical_limit, pressure_value, created_at
+            machine_id, machine_name, warning_limit, critical_limit, pressure_value, reading_ts
         )
         location_json['machines'].append(machine_json)
         state = machine_json['machine_state']
@@ -406,7 +532,7 @@ def _get_pressure_group_status_item():
 
 
 @db_session(optimistic=False)
-def get_pressure_machine_timeline(machine_name, start_time, end_time):
+def get_pressure_machine_timeline(machine_name, start_time, end_time, max_points=None):
     range_seconds = (end_time - start_time) / 1000
     if range_seconds < PRESSURE_MIN_RANGE_SECONDS:
         raise ValueError(
@@ -415,10 +541,12 @@ def get_pressure_machine_timeline(machine_name, start_time, end_time):
         )
     if range_seconds > PRESSURE_MAX_RANGE_SECONDS:
         raise ValueError(
-            f"Time range cannot exceed {PRESSURE_MAX_RANGE_SECONDS} seconds. "
+            f"Time range cannot exceed {PRESSURE_MAX_RANGE_SECONDS / 86400:.0f} day(s) "
+            f"({PRESSURE_MAX_RANGE_SECONDS} seconds). "
             f"Selected range is {range_seconds:.2f} second(s)."
         )
 
+    max_points = _clamp_pressure_max_points(max_points)
     machine_name_escaped = _escape_sql_literal(machine_name)
     machine_query = f"""
         SELECT id, machine_name, warning_limit, critical_limit
@@ -435,27 +563,24 @@ def get_pressure_machine_timeline(machine_name, start_time, end_time):
     start_ts = _format_pressure_sql_timestamp(start_dt)
     end_ts = _format_pressure_sql_timestamp(end_dt)
 
-    data_query = f"""
-        SELECT timestamp, pressure_value
-        FROM {schema_name}.pressure_sensor_data
-        WHERE machine_id = {machine_id}
-          AND created_at >= TIMESTAMP '{start_ts}'
-          AND created_at <= TIMESTAMP '{end_ts}'
-        ORDER BY timestamp ASC
-    """
-    sensor_rows = _execute_raw_sql(data_query)
+    chart_data, probed_count, downsampled = _fetch_pressure_timeline_points(
+        machine_id, start_ts, end_ts, start_time, end_time, max_points
+    )
 
-    if not sensor_rows:
+    if not chart_data:
         LOGGER.info(
             "Pressure timeline empty for machine=%s (id=%s) between %s and %s",
             machine_name_db, machine_id, start_ts, end_ts,
         )
 
-    chart_data = _build_pressure_chart_data(sensor_rows, start_time, end_time)
-
     message = "Data Available for the requested Time Range"
     if not chart_data:
         message = "No pressure data available for the selected time range"
+    elif downsampled:
+        message = (
+            f"Downsampled timeline ({len(chart_data)} points). "
+            "Zoom or tighten From/To for higher detail."
+        )
 
     return {
         "parameter_name": PRESSURE_PARAMETER_NAME,
@@ -476,6 +601,10 @@ def get_pressure_machine_timeline(machine_name, start_time, end_time):
         "message": message,
         "min_range_seconds": PRESSURE_MIN_RANGE_SECONDS,
         "max_range_seconds": PRESSURE_MAX_RANGE_SECONDS,
+        "returned_points": len(chart_data),
+        "max_points": max_points,
+        "downsampled": bool(downsampled),
+        "probed_count": probed_count,
     }
 
 

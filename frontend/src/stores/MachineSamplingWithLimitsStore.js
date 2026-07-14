@@ -27,6 +27,13 @@ export function pressureTimeToEpoch(value) {
   return Number.isFinite(parsedMs) ? parsedMs : null;
 }
 
+/** Default pressure window: last 60s (high-rate sensors). Max API window is 1 year. */
+export const PRESSURE_DEFAULT_RANGE_SECONDS = 60;
+export const PRESSURE_FALLBACK_MIN_SECONDS = 1;
+export const PRESSURE_FALLBACK_MAX_SECONDS = 365 * 24 * 3600;
+
+const SAMPLING_SESSION_KEY = 'machineSamplingWithLimitsSession';
+
 export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWithLimits', {
   state: () => ({
     machine: 'T_H_OP150',
@@ -35,8 +42,8 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
     actualParameterName: 'ApcBatLow0Path1THOP150',
     isPressureMachine: false,
     pressureRangeLimits: {
-      min: null,
-      max: null,
+      min: PRESSURE_FALLBACK_MIN_SECONDS,
+      max: PRESSURE_FALLBACK_MAX_SECONDS,
     },
     selectedDates: {
       from: 1703058029000,
@@ -88,8 +95,8 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
       if (rangeSeconds == null) {
         return false;
       }
-      const minSeconds = state.pressureRangeLimits.min ?? 1;
-      const maxSeconds = state.pressureRangeLimits.max ?? 3;
+      const minSeconds = state.pressureRangeLimits.min ?? PRESSURE_FALLBACK_MIN_SECONDS;
+      const maxSeconds = state.pressureRangeLimits.max ?? PRESSURE_FALLBACK_MAX_SECONDS;
       return rangeSeconds >= minSeconds && rangeSeconds <= maxSeconds;
     },
   },
@@ -105,23 +112,23 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         to: currentTimestamp,
       };
     },
-    refreshPressureTimestamp(seconds = 3) {
+    refreshPressureTimestamp(seconds = PRESSURE_DEFAULT_RANGE_SECONDS) {
       const currentTimestamp = Date.now();
-      const minSeconds = this.pressureRangeLimits.min ?? 1;
-      const maxSeconds = this.pressureRangeLimits.max ?? 3;
+      const minSeconds = this.pressureRangeLimits.min ?? PRESSURE_FALLBACK_MIN_SECONDS;
+      const maxSeconds = this.pressureRangeLimits.max ?? PRESSURE_FALLBACK_MAX_SECONDS;
       const boundedSeconds = Math.min(Math.max(seconds, minSeconds), maxSeconds);
       this.selectedDates = {
         from: currentTimestamp - boundedSeconds * 1000,
         to: currentTimestamp,
       };
     },
-    refreshPressureTimestampAround(latestEpochMs, seconds = 3) {
+    refreshPressureTimestampAround(latestEpochMs, seconds = PRESSURE_DEFAULT_RANGE_SECONDS) {
       const latest = pressureTimeToEpoch(latestEpochMs);
       if (!latest) {
         return;
       }
-      const minSeconds = this.pressureRangeLimits.min ?? 1;
-      const maxSeconds = this.pressureRangeLimits.max ?? 3;
+      const minSeconds = this.pressureRangeLimits.min ?? PRESSURE_FALLBACK_MIN_SECONDS;
+      const maxSeconds = this.pressureRangeLimits.max ?? PRESSURE_FALLBACK_MAX_SECONDS;
       const boundedSeconds = Math.min(Math.max(seconds, minSeconds), maxSeconds);
       this.selectedDates = {
         from: latest - boundedSeconds * 1000,
@@ -198,7 +205,7 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
 
       const url = `/pressure/machines/${encodeURIComponent(this.machine)}/air-pressure?startTime=${encodeURIComponent(
         this.selectedDates.from
-      )}&endTime=${encodeURIComponent(this.selectedDates.to)}`;
+      )}&endTime=${encodeURIComponent(this.selectedDates.to)}&maxPoints=1500`;
 
       try {
         const response = await backendApi.get(url);
@@ -279,6 +286,53 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
     },
     setLastSelectedParameter(parameter) {
       this.lastSelectedParameter = parameter;
+      this.persistSamplingSession();
+    },
+    persistSamplingSession() {
+      try {
+        const payload = {
+          machine: this.machine,
+          parameterGroup: this.parameterGroup,
+          displayName: this.displayName,
+          actualParameterName: this.actualParameterName,
+          isPressureMachine: this.isPressureMachine,
+          selectedDates: { ...this.selectedDates },
+          lastSelectedParameter: this.lastSelectedParameter,
+        };
+        sessionStorage.setItem(SAMPLING_SESSION_KEY, JSON.stringify(payload));
+      } catch (error) {
+        console.warn('Unable to persist sampling session', error);
+      }
+    },
+    restoreSamplingSession() {
+      try {
+        const raw = sessionStorage.getItem(SAMPLING_SESSION_KEY);
+        if (!raw) {
+          return false;
+        }
+        const payload = JSON.parse(raw);
+        if (!payload?.machine) {
+          return false;
+        }
+        this.machine = payload.machine;
+        this.parameterGroup = payload.parameterGroup || '';
+        this.displayName = payload.displayName || this.displayName;
+        this.actualParameterName = payload.actualParameterName || this.actualParameterName;
+        this.isPressureMachine = !!payload.isPressureMachine;
+        if (payload.selectedDates?.from && payload.selectedDates?.to) {
+          this.selectedDates = {
+            from: Number(payload.selectedDates.from),
+            to: Number(payload.selectedDates.to),
+          };
+        }
+        if (payload.lastSelectedParameter) {
+          this.lastSelectedParameter = payload.lastSelectedParameter;
+        }
+        return true;
+      } catch (error) {
+        console.warn('Unable to restore sampling session', error);
+        return false;
+      }
     },
     setMachineDetails(details) {
       this.machine = details.machine;
@@ -298,11 +352,20 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
       if (this.isPressureMachine && details.initializePressureDates !== false) {
         const latest = this.resolvePressureAnchorEpoch(details);
         if (latest) {
-          this.refreshPressureTimestampAround(latest, 3);
+          this.refreshPressureTimestampAround(latest, PRESSURE_DEFAULT_RANGE_SECONDS);
         } else {
-          this.refreshPressureTimestamp(3);
+          this.refreshPressureTimestamp(PRESSURE_DEFAULT_RANGE_SECONDS);
         }
       }
+      this.lastSelectedParameter = {
+        ...details,
+        machine: this.machine,
+        actualParameterName: this.actualParameterName,
+        parameterGroup: this.parameterGroup,
+        isPressureMachine: this.isPressureMachine,
+        is_pressure_machine: this.isPressureMachine,
+      };
+      this.persistSamplingSession();
     },
   },
 });

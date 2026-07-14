@@ -1820,24 +1820,27 @@ async def read_pressure_machine_air_pressure(
     endTime: str = Query(
         ...,
         description="End time: epoch milliseconds or IST datetime (YYYY-MM-DD HH:MM:SS).",
-        example="2026-06-30 15:08:16",
+        example="2026-06-30 16:08:06",
+    ),
+    maxPoints: int = Query(
+        1500,
+        ge=50,
+        le=2000,
+        description="Max points returned after downsampling (LTTB / time buckets).",
     ),
 ):
     """
     GET PRESSURE MACHINE AIR PRESSURE TIMELINE
     ==========================================
 
-    Returns air pressure sensor readings for a pressure monitoring machine.
-    Time filtering uses the pressure_sensor_data.created_at column.
-    Allowed range: 1 to 3 seconds.
+    Returns air pressure sensor readings as a time-series line chart payload.
+    Time filtering uses pressure_sensor_data.timestamp (sensor reading time).
+    Allowed range: 1 second up to 1 year.
 
-    **startTime / endTime** accept either:
-    - Epoch milliseconds (e.g. `1782812286622`)
-    - IST datetime string (e.g. `2026-06-30 15:08:06`)
+    Large windows are downsampled server-side (SQL buckets + LTTB) so year-scale
+    queries stay bounded. Zoom into a smaller From/To window for raw detail.
 
-    **chart_data** items are `[IST datetime string, pressure_value]` plotted across your
-    selected **startTime → endTime** window. Pressure values are from the database;
-    timestamps are aligned to the filter range for display.
+    **chart_data** items are `[epoch_ms, pressure_value]` using true reading timestamps.
     """
     process_start_time = time.time()
     try:
@@ -1854,6 +1857,7 @@ async def read_pressure_machine_air_pressure(
             machine_name=machineName,
             start_time=start_ms,
             end_time=end_ms,
+            max_points=maxPoints,
         )
         end_time = time.time() - process_start_time
         LOGGER.info(f"Total Time Taken For pressure timeline endpoint: {(round((end_time * 1000), 2))} ms")
