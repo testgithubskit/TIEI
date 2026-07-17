@@ -1,0 +1,27 @@
+version: '3.8'
+
+services:
+  backend:
+    image: toyota-backend:v1
+    container_name: toyota-backend
+    ports:
+      - "3003:3003"
+    # Uses ENV baked into the image (backend/Dockerfile) — no host .env required
+    networks:
+      - toyota-network
+    restart: unless-stopped
+
+  frontend:
+    image: toyota-frontend:v1
+    container_name: toyota-frontend
+    ports:
+      - "3051:80"
+    depends_on:
+      - backend
+    networks:
+      - toyota-network
+    restart: unless-stopped
+
+networks:
+  toyota-network:
+    driver: bridge

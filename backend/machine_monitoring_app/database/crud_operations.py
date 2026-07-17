@@ -119,6 +119,13 @@ def _format_pressure_ist_datetime(dt):
     return text
 
 
+def _format_pressure_ist_datetime_seconds(dt):
+    """Format naive DB datetime as YYYY-MM-DD HH:MM:SS (no fractional seconds)."""
+    if dt is None:
+        return None
+    return dt.strftime('%Y-%m-%d %H:%M:%S')
+
+
 def _pressure_sql_time_bounds(start_ms, end_ms):
     """Build naive IST bounds matching pressure_sensor_data.timestamp storage."""
     start_dt = _epoch_ms_to_pressure_dt(start_ms)
@@ -605,6 +612,318 @@ def get_pressure_machine_timeline(machine_name, start_time, end_time, max_points
         "max_points": max_points,
         "downsampled": bool(downsampled),
         "probed_count": probed_count,
+    }
+
+
+def parse_pressure_date_param(value, field_name):
+    if value in (None, ''):
+        return None
+
+    if isinstance(value, datetime):
+        return value.date()
+    if isinstance(value, date):
+        return value
+
+    text = str(value).strip()
+    if not text:
+        return None
+
+    for fmt in ("%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"):
+        try:
+            return datetime.strptime(text, fmt).date()
+        except ValueError:
+            continue
+
+    raise ValueError(
+        f"Invalid {field_name}. Use YYYY-MM-DD, for example: 2026-06-30"
+    )
+
+
+def _get_pressure_machine_meta(machine_name):
+    machine_name_escaped = _escape_sql_literal(machine_name)
+    machine_query = f"""
+        SELECT id, machine_name, warning_limit, critical_limit
+        FROM {schema_name}.pressure_monitoring_machine
+        WHERE machine_name = '{machine_name_escaped}'
+        LIMIT 1
+    """
+    machine_rows = _execute_raw_sql(machine_query)
+    if not machine_rows:
+        raise ValueError(f"Pressure monitoring machine '{machine_name}' not found")
+    return machine_rows[0]
+
+
+def _fetch_pressure_log_files(machine_id, start_date=None, end_date=None):
+    filters = [f"machine_id = {int(machine_id)}"]
+    if start_date is not None:
+        filters.append(f"time_stamp >= DATE '{start_date.isoformat()}'")
+    if end_date is not None:
+        filters.append(f"time_stamp < DATE '{(end_date + timedelta(days=1)).isoformat()}'")
+
+    query = f"""
+        SELECT id,
+               file_name,
+               time_stamp,
+               COALESCE(baseline, FALSE) AS baseline
+        FROM {schema_name}.pressure_log_file
+        WHERE {' AND '.join(filters)}
+        ORDER BY time_stamp DESC, id DESC
+    """
+    return _execute_raw_sql(query)
+
+
+def _fetch_pressure_points_for_log_file(machine_id, log_file_id, max_points):
+    """
+    Load one pressure log file with the same smooth downsampling as the timeline API:
+    - small files: true timestamps (+ LTTB if needed)
+    - dense files: SQL width_bucket AVG, then LTTB
+    """
+    max_points = _clamp_pressure_max_points(max_points)
+    # Keep comparison charts visually clean (ref-style), especially for dense short runs.
+    visual_max = min(max_points, 800)
+    time_col = PRESSURE_SENSOR_TIME_COL
+    mid = int(machine_id)
+    lid = int(log_file_id)
+
+    probe_query = f"""
+        SELECT COUNT(*) FROM (
+            SELECT 1
+            FROM {schema_name}.pressure_sensor_data
+            WHERE machine_id = {mid}
+              AND log_file_id = {lid}
+            LIMIT {visual_max + 1}
+        ) probe
+    """
+    probe_rows = _execute_raw_sql(probe_query)
+    probe_count = int(probe_rows[0][0]) if probe_rows else 0
+
+    # Prefer width_bucket AVG once density rises — LTTB alone preserves spikes.
+    # This matches the smooth look from the original timeline downsampling path.
+    use_bucket_avg = probe_count > min(400, visual_max)
+
+    if not use_bucket_avg:
+        data_query = f"""
+            SELECT {time_col}, pressure_value
+            FROM {schema_name}.pressure_sensor_data
+            WHERE machine_id = {mid}
+              AND log_file_id = {lid}
+            ORDER BY {time_col} ASC
+        """
+        sensor_rows = _execute_raw_sql(data_query)
+        points = _build_pressure_chart_data(sensor_rows, visual_max)
+        return points, len(sensor_rows), len(sensor_rows) > len(points)
+
+    bucket_query = f"""
+        WITH filtered AS (
+            SELECT {time_col} AS reading_ts, pressure_value
+            FROM {schema_name}.pressure_sensor_data
+            WHERE machine_id = {mid}
+              AND log_file_id = {lid}
+        ),
+        bounds AS (
+            SELECT
+                EXTRACT(EPOCH FROM MIN(reading_ts)) AS e0,
+                EXTRACT(EPOCH FROM MAX(reading_ts)) AS e1
+            FROM filtered
+        )
+        SELECT
+            MIN(f.reading_ts) AS bucket_ts,
+            AVG(f.pressure_value) AS pressure_value
+        FROM filtered f
+        CROSS JOIN bounds b
+        WHERE b.e0 IS NOT NULL AND b.e1 IS NOT NULL
+        GROUP BY width_bucket(
+            EXTRACT(EPOCH FROM f.reading_ts),
+            b.e0,
+            b.e1 + 1e-6,
+            {visual_max}
+        )
+        ORDER BY 1
+    """
+    bucket_rows = _execute_raw_sql(bucket_query)
+    points = []
+    for bucket_ts, pressure_value in bucket_rows:
+        if bucket_ts is None or pressure_value is None:
+            continue
+        if getattr(bucket_ts, 'tzinfo', None) is not None:
+            bucket_ts = bucket_ts.astimezone(PRESSURE_DB_TIMEZONE).replace(tzinfo=None)
+        points.append([_pressure_dt_to_epoch_ms(bucket_ts), float(pressure_value)])
+
+    points = _lttb_downsample_pressure(points, visual_max)
+    return points, probe_count, True
+
+
+@db_session(optimistic=False)
+def get_pressure_log_file_listing(machine_name, start_date=None, end_date=None):
+    machine_id, machine_name_db, warning_limit, critical_limit = _get_pressure_machine_meta(machine_name)
+    log_rows = _fetch_pressure_log_files(machine_id, start_date=start_date, end_date=end_date)
+
+    baseline_log_file_id = None
+    log_files = []
+    for log_file_id, file_name, time_stamp, is_baseline in log_rows:
+        if is_baseline and baseline_log_file_id is None:
+            baseline_log_file_id = log_file_id
+        # Display/list labels use pressure_log_file.time_stamp (seconds precision).
+        formatted_ts = _format_pressure_ist_datetime_seconds(time_stamp)
+        log_files.append({
+            "log_file_id": log_file_id,
+            "file_name": file_name,
+            "time_stamp": formatted_ts,
+            "processed_time": formatted_ts,
+            "baseline": bool(is_baseline),
+        })
+
+    return {
+        "machine_name": machine_name_db,
+        "parameter_name": PRESSURE_PARAMETER_NAME,
+        "warning_limit": warning_limit,
+        "critical_limit": critical_limit,
+        "baseline_log_file_id": baseline_log_file_id,
+        "log_files": log_files,
+    }
+
+
+@db_session(optimistic=False)
+def update_pressure_log_file_baseline(machine_name, log_file_id):
+    machine_id, machine_name_db, _, _ = _get_pressure_machine_meta(machine_name)
+    existing = _execute_raw_sql(
+        f"""
+        SELECT id
+        FROM {schema_name}.pressure_log_file
+        WHERE id = {int(log_file_id)}
+          AND machine_id = {int(machine_id)}
+        LIMIT 1
+        """
+    )
+    if not existing:
+        raise ValueError(
+            f"Pressure log file '{log_file_id}' not found for machine '{machine_name_db}'"
+        )
+
+    connection = PONY_DATABASE.get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE {schema_name}.pressure_log_file SET baseline = FALSE WHERE machine_id = %s",
+            [machine_id],
+        )
+        cursor.execute(
+            f"UPDATE {schema_name}.pressure_log_file SET baseline = TRUE WHERE id = %s AND machine_id = %s",
+            [log_file_id, machine_id],
+        )
+        connection.commit()
+    finally:
+        cursor.close()
+
+    return {
+        "machine_name": machine_name_db,
+        "baseline_log_file_id": int(log_file_id),
+        "message": "Baseline updated successfully",
+    }
+
+
+@db_session(optimistic=False)
+def clear_pressure_log_file_baseline(machine_name):
+    machine_id, machine_name_db, _, _ = _get_pressure_machine_meta(machine_name)
+
+    connection = PONY_DATABASE.get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            f"UPDATE {schema_name}.pressure_log_file SET baseline = FALSE WHERE machine_id = %s",
+            [machine_id],
+        )
+        connection.commit()
+    finally:
+        cursor.close()
+
+    return {
+        "machine_name": machine_name_db,
+        "baseline_log_file_id": None,
+        "message": "Baseline cleared successfully",
+    }
+
+
+@db_session(optimistic=False)
+def get_pressure_machine_timeline_by_log_files(machine_name, log_file_ids, max_points=None, include_baseline=True):
+    machine_id, machine_name_db, warning_limit, critical_limit = _get_pressure_machine_meta(machine_name)
+    requested_ids = []
+    for log_file_id in (log_file_ids or []):
+        try:
+            requested_ids.append(int(log_file_id))
+        except (TypeError, ValueError):
+            continue
+
+    if len(requested_ids) > 3:
+        raise ValueError("A maximum of 3 pressure log files can be selected at a time")
+
+    listing = get_pressure_log_file_listing(machine_name_db)
+    log_files_by_id = {item["log_file_id"]: item for item in listing["log_files"]}
+    baseline_log_file_id = listing["baseline_log_file_id"]
+
+    unique_ids = []
+    if include_baseline and baseline_log_file_id is not None:
+        unique_ids.append(int(baseline_log_file_id))
+    for log_file_id in requested_ids:
+        if log_file_id not in unique_ids:
+            unique_ids.append(log_file_id)
+
+    if not unique_ids:
+        return {
+            "parameter_name": PRESSURE_PARAMETER_NAME,
+            "machine_name": machine_name_db,
+            "warning_limit": warning_limit,
+            "critical_limit": critical_limit,
+            "baseline_log_file_id": baseline_log_file_id,
+            "series": [],
+            "legend_data": {
+                "x_axis_label": "Timestamp",
+                "y_axis_label": PRESSURE_DISPLAY_NAME,
+                "x_axis_units": "DateTime",
+                "y_axis_units": "Pa",
+            },
+            "message": "Select at least one log file to view the graph",
+        }
+
+    series = []
+    for log_file_id in unique_ids:
+        if log_file_id not in log_files_by_id:
+            continue
+        chart_data, raw_points, downsampled = _fetch_pressure_points_for_log_file(
+            machine_id, log_file_id, max_points
+        )
+        metadata = log_files_by_id[log_file_id]
+        series.append({
+            "log_file_id": log_file_id,
+            "label": metadata["processed_time"],
+            "processed_time": metadata["processed_time"],
+            "baseline": bool(log_file_id == baseline_log_file_id),
+            "selected": bool(log_file_id in requested_ids),
+            "chart_data": chart_data,
+            "raw_points": raw_points,
+            "returned_points": len(chart_data),
+            "downsampled": downsampled,
+        })
+
+    message = "Pressure comparison data loaded successfully"
+    if not series:
+        message = "No pressure data available for the selected log files"
+
+    return {
+        "parameter_name": PRESSURE_PARAMETER_NAME,
+        "machine_name": machine_name_db,
+        "warning_limit": warning_limit,
+        "critical_limit": critical_limit,
+        "baseline_log_file_id": baseline_log_file_id,
+        "series": series,
+        "legend_data": {
+            "x_axis_label": "Timestamp",
+            "y_axis_label": PRESSURE_DISPLAY_NAME,
+            "x_axis_units": "DateTime",
+            "y_axis_units": "Pa",
+        },
+        "message": message,
+        "max_points": _clamp_pressure_max_points(max_points),
     }
 
 
@@ -5965,7 +6284,7 @@ def get_maintenance_activities_parameter_new(parameter_name: str):
                                       "recent_value", "latest_occurrence",
                                       "number_of_occurrences")
 
-                db_schema = "tiei_sample_4"
+                db_schema = "tiei_sample_5"
 
                 update_operation.insert_corrective_activities_from_dataframe(insert_dict_df)
                 LOGGER.debug("INSERTED DATA INTO TIMESCALEDB corrective_activity")

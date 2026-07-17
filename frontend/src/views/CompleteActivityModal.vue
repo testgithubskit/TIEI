@@ -92,7 +92,7 @@
 <script setup>
 import { ref, computed, reactive } from 'vue';
 import dayjs from 'dayjs';
-import { InfoIcon } from 'lucide-react';
+import { InfoIcon } from 'lucide-vue-next';
 import PriorityTag from './PriorityTag.vue';
 
 const props = defineProps({

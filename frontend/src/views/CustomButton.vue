@@ -25,7 +25,7 @@
   </template>
   
   <script setup>
-  import { LoaderIcon } from 'lucide-react';
+  import { Loader as LoaderIcon } from 'lucide-vue-next';
   
   const props = defineProps({
     type: {

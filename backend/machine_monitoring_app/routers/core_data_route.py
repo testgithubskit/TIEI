@@ -67,7 +67,9 @@ from machine_monitoring_app.database.crud_operations import get_current_machine_
     get_machine_names_2, get_maintenance_activities_parameter_new, fetch_update_logs, fetch_update_logs_by_name, \
     fetch_update_logs_by_user, fetch_update_logs_by_time_range, get_disconnected_machines_data, \
     get_disconnection_history_data, get_cycle_time_factory_layout, get_cycle_time_machine_details, \
-    get_all_machines_for_cycle_time, get_pressure_machine_timeline, parse_pressure_time_param
+    get_all_machines_for_cycle_time, get_pressure_machine_timeline, parse_pressure_time_param, \
+    parse_pressure_date_param, get_pressure_log_file_listing, update_pressure_log_file_baseline, \
+    clear_pressure_log_file_baseline, get_pressure_machine_timeline_by_log_files
 
 from machine_monitoring_app.database import TIMESCALEDB_URL
 from machine_monitoring_app.exception_handling.custom_exceptions import NoParameterGroupError, GetParamGroupDBError, \
@@ -1867,4 +1869,94 @@ async def read_pressure_machine_air_pressure(
     except Exception as error:
         LOGGER.error(f"Error fetching pressure timeline for {machineName}: {error}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve pressure data: {str(error)}")
+
+
+@ROUTER.get("/pressure/machines/{machineName}/log-files")
+async def read_pressure_machine_log_files(
+    machineName: str,
+    startDate: Optional[str] = Query(
+        None,
+        description="Start date filter for pressure_log_file.time_stamp in YYYY-MM-DD format.",
+        example="2026-06-01",
+    ),
+    endDate: Optional[str] = Query(
+        None,
+        description="End date filter for pressure_log_file.time_stamp in YYYY-MM-DD format.",
+        example="2026-06-30",
+    ),
+):
+    try:
+        start_date = parse_pressure_date_param(startDate, "startDate")
+        end_date = parse_pressure_date_param(endDate, "endDate")
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(status_code=400, detail="Start date cannot be greater than end date")
+        return get_pressure_log_file_listing(machineName, start_date=start_date, end_date=end_date)
+    except HTTPException:
+        raise
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error fetching pressure log files for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve pressure log files: {str(error)}")
+
+
+@ROUTER.put("/pressure/machines/{machineName}/baseline-log-file")
+async def put_pressure_machine_baseline_log_file(
+    machineName: str,
+    logFileId: int = Query(..., description="pressure_log_file.id to mark as baseline"),
+):
+    try:
+        return update_pressure_log_file_baseline(machineName, logFileId)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error updating pressure baseline for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to update pressure baseline: {str(error)}")
+
+
+@ROUTER.delete("/pressure/machines/{machineName}/baseline-log-file")
+async def delete_pressure_machine_baseline_log_file(machineName: str):
+    try:
+        return clear_pressure_log_file_baseline(machineName)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error clearing pressure baseline for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear pressure baseline: {str(error)}")
+
+
+@ROUTER.get("/pressure/machines/{machineName}/air-pressure-log-files")
+async def read_pressure_machine_air_pressure_log_files(
+    machineName: str,
+    logFileIds: str = Query(
+        "",
+        description="Comma-separated pressure_log_file ids selected by the user. Maximum 3.",
+        example="1,2,3",
+    ),
+    includeBaseline: bool = Query(
+        True,
+        description="When true, include the currently configured baseline log file automatically.",
+    ),
+    maxPoints: int = Query(
+        1500,
+        ge=50,
+        le=2000,
+        description="Max points returned per selected log file after downsampling.",
+    ),
+):
+    try:
+        parsed_log_file_ids = [
+            int(item.strip()) for item in str(logFileIds).split(',') if item and item.strip()
+        ]
+        return get_pressure_machine_timeline_by_log_files(
+            machineName,
+            parsed_log_file_ids,
+            max_points=maxPoints,
+            include_baseline=includeBaseline,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error fetching pressure comparison graph for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve pressure comparison data: {str(error)}")
 

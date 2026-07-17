@@ -140,7 +140,7 @@ import SectionMain from "@/components/SectionMain.vue";
 import LayoutAuthenticatedSimple from "@/layouts/LayoutAuthenticatedSimple.vue";
 import { message } from 'ant-design-vue';
 import dayjs from 'dayjs';
-import { SearchIcon, CheckIcon, CheckCircleIcon } from 'lucide-react';
+import { SearchIcon, CheckIcon, CheckCircleIcon } from 'lucide-vue-next';
 import PriorityTag from './PriorityTag.vue';
 import CustomButton from './CustomButton.vue';
 import CompleteActivityModal from './CompleteActivityModal.vue';

@@ -51,9 +51,9 @@ def get_schema_name() -> List[str]:
         schema_names.add(entity._table_[0])
     return list(schema_names)
 
-schema_name = "tiei_sample_5" #Local DataBase TNGA
+schema_name = "tiei_sample_5" #TNGA Database Client
 # schema_name = "tiei_gd_plant_1" #GD Database Client
-# schema_name = "tiei_sample_4" #TNGA Database Client
+# schema_name = "tiei_sample_5" #Local DataBase TNGA
 
 
 class Machine(PONY_DATABASE.Entity):

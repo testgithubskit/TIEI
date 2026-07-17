@@ -29,7 +29,7 @@ from machine_monitoring_app.database import TIMESCALEDB_URL
 
 class Units(SQLModel, table=True):
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "units"
 
@@ -49,7 +49,7 @@ class Events(SQLModel, table=True):
 
     """
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "events"
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -66,7 +66,7 @@ class ParameterConditions(SQLModel, table=True):
 
     """
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "parameter_conditions"
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -83,7 +83,7 @@ class Machines(SQLModel, table=True):
 
     """
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "machines"
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -107,7 +107,7 @@ class MachineParameters(SQLModel, table=True):
 
     """
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "machine_parameters"
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -133,7 +133,7 @@ class RealTimeMachineParameters(SQLModel, table=True):
 
     """
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "real_time_machine_parameters"
 
@@ -154,7 +154,7 @@ class MachineProductionTimeline(SQLModel, table=True):
 
     """
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "machine_production_timeline"
     id: Optional[int] = Field(default=None, primary_key=True)
@@ -177,7 +177,7 @@ class MachineEventTimeline(SQLModel, table=True):
 
     """
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "machine_event_timeline"
 
@@ -208,7 +208,7 @@ class EventStaticMachineParameters(SQLModel, table=True):
 
     """
 
-    metadata = MetaData(schema="tiei_sample_4")
+    metadata = MetaData(schema="tiei_sample_5")
 
     __tablename__ = "event_static_machine_parameters"
     id: Optional[int] = Field(default=None, primary_key=True)

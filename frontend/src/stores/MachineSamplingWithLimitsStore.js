@@ -69,6 +69,10 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
       yAxisUnits: "'c",
     },
     lastSelectedParameter: null,
+    pressureLogFiles: [],
+    baselineLogFileId: null,
+    selectedPressureLogFileIds: [],
+    pressureComparisonSeries: [],
   }),
   getters: {
     isPressureContext(state) {
@@ -169,6 +173,17 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         this.pressureRangeLimits.max = responseData.max_range_seconds;
       }
     },
+    applyPressureComparisonResponse(responseData) {
+      this.warningLimit = responseData.warning_limit;
+      this.criticalLimit = responseData.critical_limit;
+      this.baselineLogFileId = responseData.baseline_log_file_id ?? null;
+      this.pressureComparisonSeries = Array.isArray(responseData.series) ? responseData.series : [];
+      this.chartData = this.pressureComparisonSeries[0]?.chart_data || [];
+      this.hoverData.xAxisLabel = responseData.legend_data?.x_axis_label || 'Timestamp';
+      this.hoverData.yAxisLabel = responseData.legend_data?.y_axis_label || 'Pressure';
+      this.hoverData.xAxisUnits = responseData.legend_data?.x_axis_units || 'DateTime';
+      this.hoverData.yAxisUnits = responseData.legend_data?.y_axis_units || 'Pa';
+    },
     async fetchMachineParameterData() {
       const group = (this.parameterGroup || '').toUpperCase();
       const param = (this.actualParameterName || '').toUpperCase();
@@ -225,6 +240,71 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
           this.alertMessage = '';
         }, 5000);
       }
+    },
+    async fetchPressureLogFiles(startDate, endDate) {
+      const params = new URLSearchParams();
+      if (startDate) {
+        params.set('startDate', startDate);
+      }
+      if (endDate) {
+        params.set('endDate', endDate);
+      }
+
+      const url = `/pressure/machines/${encodeURIComponent(this.machine)}/log-files${params.toString() ? `?${params.toString()}` : ''}`;
+
+      try {
+        const response = await backendApi.get(url);
+        this.pressureLogFiles = Array.isArray(response.data.log_files) ? response.data.log_files : [];
+        this.baselineLogFileId = response.data.baseline_log_file_id ?? null;
+        return response.data;
+      } catch (error) {
+        console.error('Error fetching pressure log files:', error);
+        this.pressureLogFiles = [];
+        throw error;
+      }
+    },
+    async fetchPressureComparisonData(logFileIds = [], includeBaseline = true) {
+      const query = new URLSearchParams();
+      if (Array.isArray(logFileIds) && logFileIds.length > 0) {
+        query.set('logFileIds', logFileIds.join(','));
+      }
+      query.set('includeBaseline', includeBaseline ? 'true' : 'false');
+      query.set('maxPoints', '800');
+
+      const url = `/pressure/machines/${encodeURIComponent(this.machine)}/air-pressure-log-files?${query.toString()}`;
+
+      try {
+        const response = await backendApi.get(url);
+        this.applyPressureComparisonResponse(response.data);
+        this.chartFetchMessage = response.data.message || '';
+        return response.data;
+      } catch (error) {
+        console.error('Error fetching pressure comparison data:', error);
+        this.chartData = [[0, 0]];
+        this.pressureComparisonSeries = [];
+        this.chartFetchMessage = error.response?.data?.detail || 'Fetching pressure comparison data failed.';
+        throw error;
+      }
+    },
+    async updatePressureBaseline(logFileId) {
+      const url = `/pressure/machines/${encodeURIComponent(this.machine)}/baseline-log-file?logFileId=${encodeURIComponent(logFileId)}`;
+      const response = await backendApi.put(url);
+      this.baselineLogFileId = response.data.baseline_log_file_id ?? logFileId;
+      this.pressureLogFiles = this.pressureLogFiles.map((item) => ({
+        ...item,
+        baseline: item.log_file_id === this.baselineLogFileId,
+      }));
+      return response.data;
+    },
+    async clearPressureBaseline() {
+      const url = `/pressure/machines/${encodeURIComponent(this.machine)}/baseline-log-file`;
+      const response = await backendApi.delete(url);
+      this.baselineLogFileId = null;
+      this.pressureLogFiles = this.pressureLogFiles.map((item) => ({
+        ...item,
+        baseline: false,
+      }));
+      return response.data;
     },
     async updateLimits(setType, limitValue = null, append = null, referenceSignal = null) {
       if (this.isPressureContext) {

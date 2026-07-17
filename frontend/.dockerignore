@@ -1,0 +1,8 @@
+node_modules
+dist
+dist_16_oct
+dist_16_oct_tnga
+.git
+*.md
+.vscode
+.idea

@@ -263,3 +263,7 @@ backend/*.pyc
 
 # Logs
 *.log
+
+#Tar files
+*.tar
+*.rar

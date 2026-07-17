@@ -1,11 +1,12 @@
 <script setup>
-import { mdiForwardburger, mdiBackburger, mdiMenu } from "@mdi/js";
+import { mdiForwardburger, mdiBackburger, mdiMenu, mdiArrowLeft } from "@mdi/js";
 import { ref, onBeforeMount, computed } from "vue";
-import { useRouter } from "vue-router";
+import { useRouter, useRoute } from "vue-router";
 import menuAside from "@/menuAside.js";
 import menuNavBar from "@/menuNavBar.js";
 import { useMainStore } from "@/stores/main.js";
 import { useStyleStore } from "@/stores/style.js";
+import { useNavigationHistoryStore } from "@/stores/navigationHistoryStore";
 import BaseIcon from "@/components/BaseIcon.vue";
 import FormControl from "@/components/FormControl.vue";
 import NavBar from "@/components/NavBar.vue";
@@ -14,47 +15,34 @@ import AsideMenu from "@/components/AsideMenu.vue";
 import FooterBar from "@/components/FooterBar.vue";
 import Database from "@/components/Database.vue";
 import { useDatabaseName } from '@/stores/DatabaseName';
-import { Tooltip } from 'ant-design-vue';
-import { RightCircleOutlined } from '@ant-design/icons-vue';
-
-// ... existing code ...
+import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore';
 
 const DatabaseName = useDatabaseName();
-const plantName = ref('');
+const samplingStore = useMachineSamplingWithLimitsStore();
 
 onBeforeMount(async () => {
   await DatabaseName.fetchSchemaName();
-  plantName.value = computed(() => {
-    if (DatabaseName.schemaName === "tiei_gd_plant_1") {
-      return "GD PLANT";
-    } else if (DatabaseName.schemaName === "tiei_sample_4") {
-      return "TNGA PLANT";
-    } else {
-      return "Unknown Plant";
-    }
-  }).value;
 });
 
-// Compute the button text and link based on the schema name
-const dashboardButton = computed(() => {
-  if (DatabaseName.schemaName === "tiei_gd_plant_1") {
-    return {
-      text: "Open TNGA Dashboard",
-      link: "http://10.82.126.73/tiei_dynamic/#/factory-level-polling/parameter-overview/grid"
-    };
-  } else if (DatabaseName.schemaName === "tiei_sample_4") {
-    return {
-      text: "Open GD Dashboard",
-      link: "http://10.82.126.73/tiei_dynamic_gd/#/factory-level-polling/parameter-overview/grid"
-    };
-  } else {
-    return {
-      text: "Open Dashboard",
-      // Same host as current app — avoid localhost redirect from 172.x which looks like logout
-      link: `${window.location.origin}${import.meta.env.BASE_URL || '/'}#/factory-level-polling/parameter-overview/grid`,
-    };
-  }
+const currentPlant = computed(() => {
+  if (DatabaseName.schemaName === 'tiei_gd_plant_1') return 'GD';
+  if (DatabaseName.schemaName === 'tiei_sample_5') return 'TNGA';
+  return 'TNGA';
 });
+
+function buildPlantGridUrl(plantKey) {
+  const host = window.location.hostname || '10.82.126.73';
+  const protocol = window.location.protocol || 'http:';
+  if (plantKey === 'GD') {
+    return `${protocol}//${host}/tiei_dynamic_gd/#/factory-level-polling/parameter-overview/grid`;
+  }
+  return `${protocol}//${host}/tiei_dynamic/#/factory-level-polling/parameter-overview/grid`;
+}
+
+function switchPlant(target) {
+  if (!target || target === currentPlant.value) return;
+  window.location.assign(buildPlantGridUrl(target));
+}
 
 useMainStore().setUser({
   name: "CMTI Admin",
@@ -68,6 +56,53 @@ const layoutAsidePadding = "xl:pl-0";
 const styleStore = useStyleStore();
 
 const router = useRouter();
+const route = useRoute();
+const navigationHistoryStore = useNavigationHistoryStore();
+
+const isMachineLevelSamplingPage = computed(() => (
+  String(route.path || '').includes('machine-level-sampling')
+  || String(route.name || '').toLowerCase().includes('machine level sampling')
+));
+
+/** Layout back + hide plant toggle only for air-pressure / honing sampling — not other machines */
+const isPressureSamplingPage = computed(() => (
+  isMachineLevelSamplingPage.value && !!samplingStore.isPressureContext
+));
+
+const showPlantToggle = computed(() => !isPressureSamplingPage.value);
+
+const handleSamplingBack = () => {
+  const previous = navigationHistoryStore.history.length
+    ? navigationHistoryStore.history[navigationHistoryStore.history.length - 1]
+    : null;
+
+  const candidate = previous?.fullPath || previous?.path || '';
+  const isLoginLike = (
+    !candidate
+    || candidate === '/'
+    || candidate === '/#/'
+    || String(candidate).toLowerCase().includes('login')
+  );
+  const isSelf = candidate.includes('machine-level-sampling');
+
+  if (!isLoginLike && !isSelf) {
+    navigationHistoryStore.removeLastRoute();
+    router.push(candidate);
+    return;
+  }
+
+  const params = route.query || {};
+  const isPressure = (
+    String(params.parameter || '').toLowerCase().includes('pressure')
+    || String(params.machine || '').toLowerCase().includes('rough')
+    || String(params.machine || '').toLowerCase().includes('finish')
+  );
+  if (isPressure) {
+    router.push('/managerialOverview');
+    return;
+  }
+  router.push('/factory-level-polling/parameter-overview/grid');
+};
 
 const isAsideMobileExpanded = ref(false);
 const isAsideLgActive = ref(false);
@@ -85,7 +120,6 @@ const menuClick = (event, item) => {
     console.log("yesssssssssssssssss")
     console.log("Logged out")
     localStorage.removeItem("token");
-    // Redirect to the login page
      router.push("/");
   }
 };
@@ -98,22 +132,28 @@ const menuClick = (event, item) => {
       'overflow-hidden lg:overflow-visible': isAsideMobileExpanded,
     }"
   >
-    <!-- Plant Name and Dashboard Button Overlay -->
-    <div class="plant-name-overlay">
-      <span>{{ plantName }}</span>
-      <Tooltip :title="dashboardButton.text">
-        <a
-          :href="dashboardButton.link"
-          target="_blank"
-          rel="noopener noreferrer"
-          class="dashboard-button"
-        >
-          {{ dashboardButton.text }}
-          <RightCircleOutlined class="ml-2" />
-        </a>
-      </Tooltip>
+    <div v-if="showPlantToggle" class="plant-toggle-overlay" role="group" aria-label="Plant switch">
+      <button
+        type="button"
+        class="plant-toggle-btn"
+        :class="{ 'is-active': currentPlant === 'TNGA' }"
+        :disabled="currentPlant === 'TNGA'"
+        title="TNGA Plant"
+        @click="switchPlant('TNGA')"
+      >
+        TNGA Plant
+      </button>
+      <button
+        type="button"
+        class="plant-toggle-btn"
+        :class="{ 'is-active': currentPlant === 'GD' }"
+        :disabled="currentPlant === 'GD'"
+        title="GD Plant"
+        @click="switchPlant('GD')"
+      >
+        GD Plant
+      </button>
     </div>
-    
 
     <div
       :class="[layoutAsidePadding, { 'ml-60 lg:ml-0': isAsideMobileExpanded }]"
@@ -142,6 +182,13 @@ const menuClick = (event, item) => {
         >
           <BaseIcon :path="mdiMenu" size="24" />
         </NavBarItemPlain>
+        <NavBarItemPlain
+          v-if="isPressureSamplingPage"
+          display="flex"
+          @click.prevent="handleSamplingBack"
+        >
+          <BaseIcon :path="mdiArrowLeft" size="24" class="text-green-600" />
+        </NavBarItemPlain>
       </NavBar>
       <AsideMenu
         :is-aside-mobile-expanded="isAsideMobileExpanded"
@@ -157,37 +204,50 @@ const menuClick = (event, item) => {
 </template>
 
 <style scoped>
-.plant-name-overlay {
+.plant-toggle-overlay {
   position: fixed;
-  top: 1.5rem;
+  top: 1.25rem;
   left: 50%;
   transform: translateX(-50%);
-  background-color: rgba(36, 133, 95, 0.9); /* Blue with 90% opacity */
+  background-color: rgba(36, 133, 95, 0.95);
   color: white;
-  padding: 0.25rem 1rem;
+  padding: 3px;
   border-radius: 9999px;
-  font-weight: bold;
-  font-size: 0.875rem;
   z-index: 50;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+  display: inline-flex;
+  align-items: stretch;
+  gap: 2px;
 }
 
-.dashboard-button {
-  background-color: rgba(255, 255, 255, 0.2);
-  color: white;
-  padding: 0.25rem 0.75rem;
+.plant-toggle-btn {
+  border: none;
+  background: transparent;
+  color: rgba(255, 255, 255, 0.75);
+  padding: 0.35rem 0.9rem;
   border-radius: 9999px;
-  font-size: 0.75rem;
-  transition: all 0.3s ease;
-  display: flex;
-  align-items: center;
+  font-weight: 800;
+  font-size: 0.8rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+  line-height: 1.1;
+  transition: background 0.15s ease, color 0.15s ease;
+  white-space: nowrap;
 }
 
-.dashboard-button:hover {
-  background-color: rgba(255, 255, 255, 0.3);
-  transform: scale(1.05);
+.plant-toggle-btn.is-active {
+  background: rgba(255, 255, 255, 0.95);
+  color: rgb(22, 101, 52);
+  cursor: default;
+}
+
+.plant-toggle-btn:not(.is-active):hover {
+  background: rgba(255, 255, 255, 0.18);
+  color: white;
+}
+
+.plant-toggle-btn:disabled {
+  cursor: default;
 }
 </style>

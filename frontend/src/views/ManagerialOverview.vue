@@ -65,7 +65,7 @@
           </div>
 
           <!-- ── Scrollable Alert Feed ── -->
-          <div class="flex-1 overflow-y-auto noc-feed p-2 space-y-3">
+          <div class="flex-1 overflow-y-auto noc-feed p-2">
             <div v-if="filteredAlerts.length === 0" class="noc-no-alerts flex flex-col items-center justify-center h-full py-8">
               <div class="w-10 h-10 mb-3 rounded-full flex items-center justify-center bg-emerald-500/10 text-emerald-500">
                 <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
@@ -76,54 +76,64 @@
               <span class="text-[10px] opacity-70 mt-1">No alerts for current filter.</span>
             </div>
 
-            <!-- Grouped by Line -->
-            <div v-else v-for="line in groupedAlerts" :key="line.name" class="noc-line-section">
-              <!-- Line Section Header -->
-              <div class="noc-line-sect-header flex justify-between items-center px-2.5 py-1.5 font-bold text-[10px] tracking-wider uppercase border">
-                <span>{{ line.name }} LINE</span>
-                <span class="noc-sect-badge px-1.5 py-0.5 rounded-full text-[9px] font-extrabold">
-                  {{ line.alerts.length }}
-                </span>
-              </div>
-
-              <!-- Alert Rows inside this Line -->
-              <div class="noc-line-alerts-list border-x border-b overflow-hidden divide-y">
-                <div v-for="(alert, idx) in line.alerts" :key="idx"
-                     @click="logParameterDetails(alert.paramDetails, alert.machineName, alert.group)"
-                     class="noc-alert-row cursor-pointer flex items-center p-2.5 transition-all duration-150"
-                     :class="{
-                       'noc-alert-crit-row': alert.state === 'CRITICAL',
-                       'noc-alert-warn-row': alert.state === 'WARNING',
-                       'noc-alert-disc-row': alert.state === 'DISCONNECTED'
-                     }">
-                  
-                  <!-- Flex container for alert details -->
-                  <div class="flex-1 min-w-0 flex items-center px-1">
-                    <!-- Machine Name -->
-                    <div class="w-[15%] shrink-0 font-bold truncate noc-machine-txt" :title="alert.machineName">
+            <!-- One table for all lines so parameter dividers align to the longest name -->
+            <div v-else class="noc-line-alerts-list overflow-x-auto">
+              <table class="noc-alert-table">
+                <tbody v-for="line in groupedAlerts" :key="line.name">
+                  <tr class="noc-line-sect-header">
+                    <td :colspan="alertTableColSpan" class="noc-line-sect-header-cell">
+                      <div class="flex justify-between items-center px-2.5 py-1.5 font-bold text-[10px] tracking-wider uppercase">
+                        <span>{{ line.name }} LINE</span>
+                        <span class="noc-sect-badge px-1.5 py-0.5 rounded-full text-[9px] font-extrabold">
+                          {{ line.alerts.length }}
+                        </span>
+                      </div>
+                    </td>
+                  </tr>
+                  <tr
+                    v-for="(alert, idx) in line.alerts"
+                    :key="line.name + '-' + idx"
+                    class="noc-alert-row cursor-pointer transition-all duration-150"
+                    :class="{
+                      'noc-alert-crit-row': alert.state === 'CRITICAL',
+                      'noc-alert-warn-row': alert.state === 'WARNING',
+                      'noc-alert-disc-row': alert.state === 'DISCONNECTED'
+                    }"
+                    @click="logParameterDetails(alert.paramDetails, alert.machineName, alert.group)"
+                  >
+                    <td class="noc-machine-txt font-bold" :title="alert.machineName">
                       {{ formatMachineName(alert.machineName) }}
-                    </div>
-                    <!-- Group/Parameter Name — slightly tighter so value+unit fit on one line -->
-                    <div class="flex-1 min-w-0 max-w-[42%] font-bold truncate noc-group-txt" :title="alert.group">
+                    </td>
+                    <td class="noc-alert-vdivider-cell" aria-hidden="true">
+                      <span class="noc-alert-vdivider" />
+                    </td>
+                    <td class="noc-group-txt font-bold" :title="alert.group">
                       {{ alert.group }}
-                    </div>
-                    <!-- Axis / display name — empty for air-pressure machines (no axis) -->
-                    <div class="w-[7%] shrink-0 font-semibold truncate text-center noc-display-txt" :title="alert.displayName">
-                      {{ alert.displayName }}
-                    </div>
-                    <!-- Value & Unit — keep on one row -->
-                    <div class="w-[22%] shrink-0 text-right font-black font-mono whitespace-nowrap noc-value-txt"
-                         :class="{
-                           'text-red-500': alert.state === 'CRITICAL',
-                           'text-amber-500': alert.state === 'WARNING',
-                           'text-slate-400': alert.state === 'DISCONNECTED'
-                         }">
+                    </td>
+                    <template v-if="hasAnyAlertAxis">
+                      <td class="noc-alert-vdivider-cell" aria-hidden="true">
+                        <span class="noc-alert-vdivider" />
+                      </td>
+                      <td class="noc-display-txt font-semibold text-center" :title="alert.displayName || ''">
+                        {{ alert.displayName || '' }}
+                      </td>
+                    </template>
+                    <td class="noc-alert-vdivider-cell" aria-hidden="true">
+                      <span class="noc-alert-vdivider" />
+                    </td>
+                    <td
+                      class="noc-value-txt text-right font-black font-mono"
+                      :class="{
+                        'text-red-500': alert.state === 'CRITICAL',
+                        'text-amber-500': alert.state === 'WARNING',
+                        'text-slate-400': alert.state === 'DISCONNECTED'
+                      }"
+                    >
                       {{ alert.value }}{{ alert.paramDetails?.unit_short_name ? ' ' + alert.paramDetails.unit_short_name : '' }}
-                    </div>
-                  </div>
-                  
-                </div>
-              </div>
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
         </div>
@@ -147,10 +157,33 @@
                 <span class="font-black tracking-widest text-[20px] uppercase leading-none noc-plant-name">
                   Toyota Industries Engine India
                 </span>
-                <span class="text-[11px] font-black tracking-widest uppercase px-2.5 py-1.5 transition-all duration-300"
-                      :class="panelTheme === 'dark' ? 'noc-plant-badge-dark' : 'noc-plant-badge-light'">
-                  TNGA Plant
-                </span>
+                <div
+                  class="noc-plant-toggle"
+                  :class="panelTheme === 'dark' ? 'noc-plant-toggle-dark' : 'noc-plant-toggle-light'"
+                  role="group"
+                  aria-label="Plant switch"
+                >
+                  <button
+                    type="button"
+                    class="noc-plant-toggle-btn"
+                    :class="{ 'is-active': currentPlant === 'TNGA' }"
+                    :disabled="currentPlant === 'TNGA'"
+                    title="Switch to TNGA Plant"
+                    @click="switchPlant('TNGA')"
+                  >
+                    TNGA Plant
+                  </button>
+                  <button
+                    type="button"
+                    class="noc-plant-toggle-btn"
+                    :class="{ 'is-active': currentPlant === 'GD' }"
+                    :disabled="currentPlant === 'GD'"
+                    title="Switch to GD Plant"
+                    @click="switchPlant('GD')"
+                  >
+                    GD Plant
+                  </button>
+                </div>
               </div>
             </div>
             
@@ -551,6 +584,7 @@ import { useFactoryOverviewStore } from '../stores/FactoryOverviewStore';
 import { useFactoryPollOverviewStore } from '../stores/FactoryPollGridStore';
 import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore'; 
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
+import { useDatabaseName } from '@/stores/DatabaseName';
 
 // MAIN ISOMETRIC CONFIGURATION
 import { CONFIG } from './ManagerialOverviewConfig';
@@ -928,6 +962,9 @@ const groupedAlerts = computed(() => {
   })).sort((a, b) => a.name.localeCompare(b.name));
 });
 
+const hasAnyAlertAxis = computed(() => filteredAlerts.value.some((alert) => !!alert.displayName));
+const alertTableColSpan = computed(() => (hasAnyAlertAxis.value ? 7 : 5));
+
 // ── Machine placement ──
 const placedMachines = computed(() => {
   const list = [];
@@ -1189,6 +1226,34 @@ function goToFactoryPollingGrid() {
   router.push('/factory-level-polling/parameter-overview/grid');
 }
 
+const DatabaseName = useDatabaseName();
+
+function buildPlantOverviewUrl(plantKey) {
+  const host = window.location.hostname || '10.82.126.73';
+  const protocol = window.location.protocol || 'http:';
+  if (plantKey === 'GD') {
+    return `${protocol}//${host}/tiei_dynamic_gd/#/managerialOverview`;
+  }
+  return `${protocol}//${host}/tiei_dynamic/#/managerialOverview`;
+}
+
+const PLANT_URLS = computed(() => ({
+  TNGA: buildPlantOverviewUrl('TNGA'),
+  GD: buildPlantOverviewUrl('GD'),
+}));
+
+const currentPlant = computed(() => {
+  if (DatabaseName.schemaName === 'tiei_gd_plant_1') return 'GD';
+  if (DatabaseName.schemaName === 'tiei_sample_5') return 'TNGA';
+  return 'TNGA';
+});
+
+function switchPlant(target) {
+  if (!target || target === currentPlant.value) return;
+  const url = PLANT_URLS.value[target];
+  if (url) window.location.assign(url);
+}
+
 function logParameterDetails(param, machineName, parameterGroup, isPressureMachine = false) {
   const details = {
     machine: machineName,
@@ -1223,6 +1288,12 @@ onMounted(async () => {
   // Initial fit with skeleton data
   await nextTick();
   fitView();
+
+  try {
+    await DatabaseName.fetchSchemaName();
+  } catch (error) {
+    console.warn('Schema name unavailable for plant toggle.');
+  }
 
   try {
     await factoryStore.fetchAndFormatData();
@@ -1385,7 +1456,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 10px 5px;
+  padding: 7px 11px 6px;
   font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.14em;
@@ -1401,7 +1472,7 @@ onMounted(async () => {
   color: #94a3b8;
   font-size: 11px;
   font-weight: 800;
-  padding: 1px 6px;
+  padding: 2px 7px;
   border-radius: 20px;
   letter-spacing: 0.05em;
 }
@@ -1485,41 +1556,145 @@ onMounted(async () => {
   font-weight: 800 !important;
 }
 
+.noc-line-sect-header-cell {
+  padding: 0 !important;
+  border: none !important;
+  border-bottom: none !important;
+  border-left: none !important;
+  background: inherit;
+}
+
 .noc-line-alerts-list {
   box-shadow: none !important;
-  border-top: none;
+  border: none !important;
+  border-radius: 0;
+  background: transparent;
 }
 
 .noc-alert-row {
   position: relative;
-  transition: all 0.1s ease;
-  border-left-width: 4px;
+  transition: background-color 0.1s ease;
 }
 .noc-alert-row:active {
   transform: scale(0.995);
 }
 
-/* Vertical dividers within row columns */
+/* Real <table>: one column width for all rows → dividers align after longest parameter.
+   Must override global _table.css (zebra rows + cell border-l) which added the extra white lines. */
+.noc-alert-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: auto;
+  border: none !important;
+  outline: none !important;
+  box-shadow: none !important;
+  background: transparent;
+}
+
+.noc-alert-table tr,
+.noc-alert-table td {
+  display: table-cell;
+  max-width: none;
+  border: none !important;
+  border-left: none !important;
+  border-right: none !important;
+  border-top: none !important;
+  box-shadow: none !important;
+  background: transparent;
+}
+
+.noc-alert-table tr {
+  display: table-row;
+}
+
+.noc-alert-table tbody tr:nth-child(odd),
+.noc-alert-table tbody tr:nth-child(even),
+.noc-alert-table tbody tr:nth-child(odd):hover,
+.noc-alert-table tbody tr:hover {
+  background: transparent !important;
+}
+
+.noc-alert-table td:before {
+  content: none !important;
+  display: none !important;
+}
+
 .noc-machine-txt,
 .noc-group-txt,
+.noc-display-txt,
+.noc-value-txt,
+.noc-alert-vdivider-cell {
+  vertical-align: middle !important;
+  padding: 11px 6px !important;
+  margin: 0;
+  text-align: left;
+  justify-content: unset;
+}
+
+.noc-machine-txt,
 .noc-display-txt {
-  border-right-width: 1px;
-  border-right-style: solid;
-  padding-right: 6px;
-  margin-right: 6px;
+  width: 1%;
+  white-space: nowrap;
+}
+
+.noc-group-txt {
+  width: auto;
+  white-space: nowrap;
+  padding-right: 10px !important;
+}
+
+.noc-display-txt {
+  min-width: 1.75rem;
+  text-align: center !important;
 }
 
 .noc-value-txt {
+  width: 1%;
   white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  text-align: right !important;
+  padding-right: 10px !important;
+}
+
+.noc-alert-vdivider-cell {
+  width: 1px;
+  padding: 9px 5px !important;
+}
+
+.noc-alert-vdivider {
+  display: block;
+  width: 1px;
+  height: 15px;
+  margin: 0 auto;
+  background: #64748b;
+  opacity: 0.7;
+}
+
+/* Soft row separators only (not the global table borders) */
+.noc-alert-table .noc-alert-row td {
+  border-bottom: 1px solid rgba(71, 85, 105, 0.45) !important;
+}
+
+/* Left status accent — same as original flex rows */
+.noc-alert-row .noc-machine-txt {
+  border-left-width: 4px !important;
+  border-left-style: solid !important;
+  padding-left: 8px !important;
+}
+.noc-alert-crit-row .noc-machine-txt {
+  border-left-color: #ef4444 !important;
+}
+.noc-alert-warn-row .noc-machine-txt {
+  border-left-color: #f59e0b !important;
+}
+.noc-alert-disc-row .noc-machine-txt {
+  border-left-color: #94a3b8 !important;
 }
 
 /* ── DARK THEME STYLING ── */
-.noc-dark .noc-line-sect-header {
-  background: #1f2937; /* Strong, distinct dark grey */
-  border-color: #475569;
+.noc-dark .noc-line-sect-header-cell {
+  background: #1f2937 !important;
   color: #ffffff;
+  border-bottom: 1px solid #475569 !important;
 }
 .noc-dark .noc-sect-badge {
   background: #111827;
@@ -1527,65 +1702,70 @@ onMounted(async () => {
 }
 .noc-dark .noc-line-alerts-list {
   background: #090f16;
-  border-color: #475569;
+  border: none !important;
 }
-.noc-dark .noc-line-alerts-list > * + * {
-  border-color: #475569;
+.noc-dark .noc-alert-vdivider {
+  background: #475569;
+  opacity: 0.95;
 }
-.noc-dark .noc-machine-txt,
-.noc-dark .noc-group-txt,
-.noc-dark .noc-display-txt {
-  border-color: #475569; /* Dark separator borders */
+.noc-dark .noc-alert-table .noc-alert-row td {
+  border-bottom-color: #334155 !important;
 }
 .noc-dark .noc-machine-txt {
   color: #ffffff;
   font-weight: 800;
-  font-size: 11.5px;
+  font-size: 11px;
   letter-spacing: 0.02em;
 }
 .noc-dark .noc-group-txt {
-  color: #ffffff; /* Big and bold, not greyed out */
+  color: #ffffff;
   font-weight: 800;
-  font-size: 11.5px;
+  font-size: 11px;
   letter-spacing: 0.02em;
 }
 .noc-dark .noc-display-txt {
   color: #94a3b8;
   font-weight: 750;
-  font-size: 10.5px;
+  font-size: 10px;
 }
 .noc-dark .noc-value-txt {
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 
-/* Card highlights in dark theme */
-.noc-dark .noc-alert-crit-row {
-  border-left-color: #ef4444;
-  background: rgba(239, 68, 68, 0.08);
+/* Original status row tints (override global zebra) */
+.noc-dark .noc-alert-crit-row td {
+  background: rgba(239, 68, 68, 0.08) !important;
 }
-.noc-dark .noc-alert-crit-row:hover {
-  background: rgba(239, 68, 68, 0.16);
+.noc-dark .noc-alert-crit-row:hover td {
+  background: rgba(239, 68, 68, 0.16) !important;
 }
-.noc-dark .noc-alert-warn-row {
-  border-left-color: #f59e0b;
-  background: rgba(245, 158, 11, 0.06);
+.noc-dark .noc-alert-crit-row .noc-machine-txt {
+  border-left-color: #ef4444 !important;
 }
-.noc-dark .noc-alert-warn-row:hover {
-  background: rgba(245, 158, 11, 0.13);
+.noc-dark .noc-alert-warn-row td {
+  background: rgba(245, 158, 11, 0.06) !important;
 }
-.noc-dark .noc-alert-disc-row {
-  border-left-color: #94a3b8;
-  background: rgba(148, 163, 184, 0.08);
+.noc-dark .noc-alert-warn-row:hover td {
+  background: rgba(245, 158, 11, 0.13) !important;
 }
-.noc-dark .noc-alert-disc-row:hover {
-  background: rgba(148, 163, 184, 0.16);
+.noc-dark .noc-alert-warn-row .noc-machine-txt {
+  border-left-color: #f59e0b !important;
+}
+.noc-dark .noc-alert-disc-row td {
+  background: rgba(148, 163, 184, 0.08) !important;
+}
+.noc-dark .noc-alert-disc-row:hover td {
+  background: rgba(148, 163, 184, 0.16) !important;
+}
+.noc-dark .noc-alert-disc-row .noc-machine-txt {
+  border-left-color: #94a3b8 !important;
 }
 
 /* ── LIGHT THEME STYLING ── */
-.noc-light .noc-line-sect-header {
-  background: #cbd5e1; /* Strong, distinct light slate grey */
-  border-color: #94a3b8;
-  color: #0f172a; /* High contrast dark text */
+.noc-light .noc-line-sect-header-cell {
+  background: #cbd5e1 !important;
+  color: #0f172a;
+  border-bottom: 1px solid #94a3b8 !important;
 }
 .noc-light .noc-sect-badge {
   background: #f1f5f9;
@@ -1593,58 +1773,62 @@ onMounted(async () => {
 }
 .noc-light .noc-line-alerts-list {
   background: #ffffff;
-  border-color: #cbd5e1;
+  border: none !important;
 }
-.noc-light .noc-line-alerts-list > * + * {
-  border-color: #f1f5f9;
+.noc-light .noc-alert-vdivider {
+  background: #94a3b8;
+  opacity: 0.85;
 }
-.noc-light .noc-machine-txt,
-.noc-light .noc-group-txt,
-.noc-light .noc-display-txt {
-  border-color: #e2e8f0; /* Light separator borders */
+.noc-light .noc-alert-table .noc-alert-row td {
+  border-bottom-color: #e2e8f0 !important;
 }
 .noc-light .noc-machine-txt {
   color: #0f172a;
   font-weight: 800;
-  font-size: 11.5px;
+  font-size: 11px;
   letter-spacing: 0.02em;
 }
 .noc-light .noc-group-txt {
-  color: #1e293b; /* Big and bold, not greyed out */
+  color: #1e293b;
   font-weight: 800;
-  font-size: 11.5px;
+  font-size: 11px;
   letter-spacing: 0.02em;
 }
 .noc-light .noc-display-txt {
   color: #475569;
   font-weight: 750;
-  font-size: 10.5px;
+  font-size: 10px;
 }
 .noc-light .noc-value-txt {
-  font-size: 12.5px;
+  font-size: 11.5px;
 }
 
-/* Card highlights in light theme */
-.noc-light .noc-alert-crit-row {
-  border-left-color: #dc2626;
-  background: rgba(239, 68, 68, 0.05);
+.noc-light .noc-alert-crit-row td {
+  background: rgba(239, 68, 68, 0.05) !important;
 }
-.noc-light .noc-alert-crit-row:hover {
-  background: rgba(239, 68, 68, 0.1);
+.noc-light .noc-alert-crit-row:hover td {
+  background: rgba(239, 68, 68, 0.1) !important;
 }
-.noc-light .noc-alert-warn-row {
-  border-left-color: #d97706;
-  background: rgba(245, 158, 11, 0.04);
+.noc-light .noc-alert-crit-row .noc-machine-txt {
+  border-left-color: #dc2626 !important;
 }
-.noc-light .noc-alert-warn-row:hover {
-  background: rgba(245, 158, 11, 0.08);
+.noc-light .noc-alert-warn-row td {
+  background: rgba(245, 158, 11, 0.04) !important;
 }
-.noc-light .noc-alert-disc-row {
-  border-left-color: #64748b;
-  background: rgba(100, 116, 139, 0.05);
+.noc-light .noc-alert-warn-row:hover td {
+  background: rgba(245, 158, 11, 0.08) !important;
 }
-.noc-light .noc-alert-disc-row:hover {
-  background: rgba(100, 116, 139, 0.1);
+.noc-light .noc-alert-warn-row .noc-machine-txt {
+  border-left-color: #d97706 !important;
+}
+.noc-light .noc-alert-disc-row td {
+  background: rgba(100, 116, 139, 0.05) !important;
+}
+.noc-light .noc-alert-disc-row:hover td {
+  background: rgba(100, 116, 139, 0.1) !important;
+}
+.noc-light .noc-alert-disc-row .noc-machine-txt {
+  border-left-color: #64748b !important;
 }
 
 /* ── Filters ── */
@@ -2244,7 +2428,76 @@ onMounted(async () => {
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.03);
 }
 
-/* Glowing Plant Badge */
+/* Plant TNGA / GD toggle */
+.noc-plant-toggle {
+  display: inline-flex;
+  align-items: stretch;
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1.5px solid transparent;
+  padding: 2px;
+  gap: 2px;
+}
+.noc-plant-toggle-btn {
+  border: none;
+  background: transparent;
+  padding: 7px 14px;
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
+  line-height: 1.1;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.noc-plant-toggle-btn:disabled {
+  cursor: default;
+}
+.noc-plant-toggle-btn + .noc-plant-toggle-btn {
+  border-left: none;
+}
+.noc-plant-toggle-dark {
+  border-color: rgba(5, 175, 241, 0.4);
+  background: rgba(15, 23, 42, 0.75);
+}
+.noc-plant-toggle-dark .noc-plant-toggle-btn {
+  color: #64748b;
+}
+.noc-plant-toggle-dark .noc-plant-toggle-btn + .noc-plant-toggle-btn {
+  border-left-color: transparent;
+}
+.noc-plant-toggle-dark .noc-plant-toggle-btn.is-active {
+  background: rgba(5, 175, 241, 0.22);
+  color: #05AFF1;
+  box-shadow: inset 0 0 0 1px rgba(5, 175, 241, 0.35);
+}
+.noc-plant-toggle-dark .noc-plant-toggle-btn:not(.is-active):hover {
+  color: #94a3b8;
+  background: rgba(51, 65, 85, 0.45);
+}
+.noc-plant-toggle-light {
+  border-color: rgba(0, 139, 197, 0.35);
+  background: rgba(248, 250, 252, 0.95);
+}
+.noc-plant-toggle-light .noc-plant-toggle-btn {
+  color: #94a3b8;
+}
+.noc-plant-toggle-light .noc-plant-toggle-btn + .noc-plant-toggle-btn {
+  border-left-color: transparent;
+}
+.noc-plant-toggle-light .noc-plant-toggle-btn.is-active {
+  background: rgba(0, 139, 197, 0.16);
+  color: #008bc5;
+  box-shadow: inset 0 0 0 1px rgba(0, 139, 197, 0.28);
+}
+.noc-plant-toggle-light .noc-plant-toggle-btn:not(.is-active):hover {
+  color: #475569;
+  background: rgba(226, 232, 240, 0.8);
+}
+
+/* Glowing Plant Badge (kept for compatibility) */
 .noc-plant-badge-dark {
   background: rgba(5, 175, 241, 0.08) !important;
   border: 1px solid rgba(5, 175, 241, 0.35) !important;
@@ -2257,6 +2510,28 @@ onMounted(async () => {
   border: 1px solid rgba(0, 139, 197, 0.25) !important;
   color: #008bc5 !important;
   border-radius: 4px;
+}
+.noc-plant-switch-dark {
+  background: rgba(16, 185, 129, 0.12);
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  color: #34d399;
+  border-radius: 4px;
+  text-decoration: none;
+}
+.noc-plant-switch-dark:hover {
+  background: rgba(16, 185, 129, 0.22);
+  color: #6ee7b7;
+}
+.noc-plant-switch-light {
+  background: rgba(16, 185, 129, 0.08);
+  border: 1px solid rgba(5, 150, 105, 0.35);
+  color: #047857;
+  border-radius: 4px;
+  text-decoration: none;
+}
+.noc-plant-switch-light:hover {
+  background: rgba(16, 185, 129, 0.16);
+  color: #065f46;
 }
 </style>
 

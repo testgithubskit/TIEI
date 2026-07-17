@@ -75,29 +75,29 @@ def get_all_status_templates():
     """
 
     template = """SELECT test.recent_group, count(*)
-        FROM (SELECT tiei_sample_4.real_time_machine_parameters.machine_parameters_id,
+        FROM (SELECT tiei_sample_5.real_time_machine_parameters.machine_parameters_id,
               last(condition_id,time) AS recent_condition, last(time,time) AS recent_time,
               last(parameter_group_id, time) AS recent_group
-                    FROM tiei_sample_4.real_time_machine_parameters
-                JOIN tiei_sample_4.machine_parameters
-                 ON tiei_sample_4.machine_parameters.id = 
-                 tiei_sample_4.real_time_machine_parameters.machine_parameters_id
+                    FROM tiei_sample_5.real_time_machine_parameters
+                JOIN tiei_sample_5.machine_parameters
+                 ON tiei_sample_5.machine_parameters.id = 
+                 tiei_sample_5.real_time_machine_parameters.machine_parameters_id
                  WHERE time > now() - INTERVAL '1 days'
-                GROUP BY tiei_sample_4.real_time_machine_parameters.machine_parameters_id
+                GROUP BY tiei_sample_5.real_time_machine_parameters.machine_parameters_id
                 HAVING last(condition_id,time) = {condition_holder}) as test
     GROUP BY test.recent_group
     ORDER BY recent_group;
     """
 
     # template = """SELECT test.recent_group, count(*)
-    #     FROM (SELECT tiei_sample_4.real_time_machine_parameters.machine_parameters_id,
+    #     FROM (SELECT tiei_sample_5.real_time_machine_parameters.machine_parameters_id,
     #           last(condition_id,time) AS recent_condition, last(time,time) AS recent_time,
     #           last(parameter_group_id, time) AS recent_group
-    #                 FROM tiei_sample_4.real_time_machine_parameters
-    #             JOIN tiei_sample_4.machine_parameters
-    #              ON tiei_sample_4.machine_parameters.id =
-    #               tiei_sample_4.real_time_machine_parameters.machine_parameters_id
-    #             GROUP BY tiei_sample_4.real_time_machine_parameters.machine_parameters_id
+    #                 FROM tiei_sample_5.real_time_machine_parameters
+    #             JOIN tiei_sample_5.machine_parameters
+    #              ON tiei_sample_5.machine_parameters.id =
+    #               tiei_sample_5.real_time_machine_parameters.machine_parameters_id
+    #             GROUP BY tiei_sample_5.real_time_machine_parameters.machine_parameters_id
     #             HAVING last(condition_id,time) = {condition_holder}) as test
     # GROUP BY test.recent_group
     # ORDER BY recent_group;
@@ -115,9 +115,9 @@ def get_all_recent_time_template():
     """
 
     template = """SELECT machine_parameters_id, first(time, time) as old_time
-        FROM tiei_sample_4.real_time_machine_parameters
-        JOIN tiei_sample_4.machine_parameters
-            ON tiei_sample_4.machine_parameters.id = tiei_sample_4.real_time_machine_parameters.machine_parameters_id
+        FROM tiei_sample_5.real_time_machine_parameters
+        JOIN tiei_sample_5.machine_parameters
+            ON tiei_sample_5.machine_parameters.id = tiei_sample_5.real_time_machine_parameters.machine_parameters_id
             WHERE parameter_group_id = 17
         GROUP BY machine_parameters_id
         ORDER BY machine_parameters_id
@@ -175,7 +175,7 @@ def main():
 
     """
 
-    # query = """SELECT * FROM tiei_sample_4.machine_parameters
+    # query = """SELECT * FROM tiei_sample_5.machine_parameters
     # ORDER BY id ASC LIMIT 10;
     # """
     # data = PONY_DATABASE.select(query)

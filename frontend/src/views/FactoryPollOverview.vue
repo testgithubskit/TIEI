@@ -453,8 +453,8 @@ const dashboardButton = computed(() => {
       </div>
     </div>
 
-    <SectionMain>
-      <div class="container mx-auto flex flex-col space-y-1">
+    <SectionMain class="factory-poll-section">
+      <div class="w-full flex flex-col space-y-1">
         <div class="w-8 h-8">
           <!-- Add your loading SVG icon here -->
           <img v-if="isLoading" src="@\assets\gifs\Loading.gif" alt="Loading...">
@@ -534,9 +534,9 @@ const dashboardButton = computed(() => {
         </div>
       </div>
       
-      <div class="container mx-auto flex flex-col space-y-4">
+      <div class="w-full flex flex-col space-y-4">
         <!-- Cycle Time View -->
-        <div v-if="isCycleTimeSelected" class="container mx-auto flex flex-col space-y-4">
+        <div v-if="isCycleTimeSelected" class="w-full flex flex-col space-y-4">
           <!-- Show message from backend if available -->
           <div v-if="cycleTimeData && cycleTimeData.message" class="p-4 bg-blue-100 border border-blue-400 rounded">
             <p class="font-semibold text-blue-800">{{ cycleTimeData.message }}</p>
@@ -597,7 +597,14 @@ const dashboardButton = computed(() => {
 </template>
 
 <style scoped>
-/* Tailwind CSS classes for animation */
+/* Use more of the horizontal viewport — less empty left/right margin */
+:deep(.factory-poll-section),
+.factory-poll-section {
+  max-width: 100% !important;
+  padding-left: 0.75rem;
+  padding-right: 0.75rem;
+}
+
 @keyframes slideIn {
   from {
     transform: translateX(100%);
@@ -607,10 +614,8 @@ const dashboardButton = computed(() => {
   }
 }
 
-/* Add your alert styles here */
 .alert {
   @apply fixed top-10 left-1/2 transform -translate-x-1/2 text-white p-2 rounded-md border z-50;
   animation: slideIn 0.5s ease-out;
 }
-
 </style>

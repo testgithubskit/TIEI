@@ -1,7 +1,9 @@
 <script setup>
-import { computed, ref, onBeforeMount,onMounted } from "vue";
+import { computed, ref, onBeforeMount, onMounted } from "vue";
 
 import axios from 'axios';
+import flatPickr from 'vue-flatpickr-component';
+import 'flatpickr/dist/flatpickr.css';
 
 import DyLineChartWithLimits from "@/components/Charts/DyLineChartWithLimits.vue";
 import TimePickerFlatEmitter from "@/components/TimePickerFlatEmitter.vue";
@@ -388,6 +390,323 @@ function convertEpochToLocal(epochTimestamp) {
 }
 
 const currentParameter = ref(null);
+const isPressureLogListLoading = ref(false);
+const isPressureGraphLoading = ref(false);
+const isUpdatingPressureBaseline = ref(false);
+const pressureDateRange = ref({
+  startDate: '',
+  endDate: '',
+});
+const pressureMaxSelectableDate = computed(() => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, '0');
+  const day = String(now.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+});
+
+const pressureFromDateConfig = computed(() => ({
+  dateFormat: 'Y-m-d',
+  altInput: true,
+  altFormat: 'd-m-Y',
+  allowInput: false,
+  disableMobile: true,
+  maxDate: pressureDateRange.value.endDate || pressureMaxSelectableDate.value,
+  onReady: (_dates, _str, instance) => {
+    instance.calendarContainer.classList.add('pressure-fp-calendar');
+  },
+}));
+
+const pressureToDateConfig = computed(() => ({
+  dateFormat: 'Y-m-d',
+  altInput: true,
+  altFormat: 'd-m-Y',
+  allowInput: false,
+  disableMobile: true,
+  minDate: pressureDateRange.value.startDate || undefined,
+  maxDate: pressureMaxSelectableDate.value,
+  onReady: (_dates, _str, instance) => {
+    instance.calendarContainer.classList.add('pressure-fp-calendar');
+  },
+}));
+
+const pressureLogFiles = computed(() => machineSamplingWithLimitsStore.pressureLogFiles || []);
+const pressureComparisonSeries = computed(() => machineSamplingWithLimitsStore.pressureComparisonSeries || []);
+const selectedPressureLogFileIds = computed(() => machineSamplingWithLimitsStore.selectedPressureLogFileIds || []);
+const baselineLogFileId = computed(() => machineSamplingWithLimitsStore.baselineLogFileId);
+const pressureHasChartSeries = computed(() => pressureComparisonSeries.value.some((series) => Array.isArray(series.chart_data) && series.chart_data.length > 0));
+const baselineLogFileLabel = computed(() => {
+  const baselineRow = pressureLogFiles.value.find((item) => item.log_file_id === baselineLogFileId.value);
+  const raw = baselineRow?.time_stamp || baselineRow?.processed_time;
+  if (!raw) {
+    return 'Not selected';
+  }
+  const datePart = formatProcessedDateOnly(raw);
+  const timePart = formatProcessedTimeOnly(raw);
+  return [datePart, timePart].filter(Boolean).join(' ');
+});
+const canUpdateBaseline = computed(() => selectedPressureLogFileIds.value.length === 1);
+const hasBaseline = computed(() => baselineLogFileId.value != null);
+const hasPressureSelections = computed(() => selectedPressureLogFileIds.value.length > 0);
+
+function formatProcessedDateOnly(value) {
+  if (value == null || value === '') {
+    return '';
+  }
+  const text = String(value).trim();
+  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) {
+    return iso[1];
+  }
+  const dmy = text.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})/);
+  if (dmy) {
+    return dmy[1];
+  }
+  if (text.includes(',')) {
+    return text.split(',')[0].trim();
+  }
+  return text.split(/\s+/)[0] || text;
+}
+
+function formatProcessedTimeOnly(value) {
+  if (value == null || value === '') {
+    return '';
+  }
+  const text = String(value).trim();
+  let timePart = '';
+  if (text.includes(',')) {
+    timePart = text.split(',').slice(1).join(',').trim();
+  } else {
+    const isoSplit = text.match(/^\d{4}-\d{2}-\d{2}[ T](.+)$/);
+    if (isoSplit) {
+      timePart = isoSplit[1].trim();
+    } else {
+      const parts = text.split(/\s+/);
+      timePart = parts.length > 1 ? parts.slice(1).join(' ') : '';
+    }
+  }
+  // Show HH:MM:SS only — drop fractional milliseconds.
+  const hhmmss = timePart.match(/^(\d{1,2}:\d{2}:\d{2})/);
+  return hhmmss ? hhmmss[1] : timePart.replace(/\.\d+.*$/, '');
+}
+
+const pressureSeriesLegend = computed(() => {
+  let colorIdx = 0;
+  return pressureComparisonSeries.value
+    .filter((series) => Array.isArray(series.chart_data) && series.chart_data.length > 0)
+    .map((series) => {
+      const isBaseline = !!series.baseline;
+      const dateOnly = formatProcessedDateOnly(series.processed_time || series.label || '');
+      const color = isBaseline
+        ? 'rgb(185, 28, 28)'
+        : ['rgb(37, 99, 235)', 'rgb(147, 51, 234)', 'rgb(219, 39, 119)'][colorIdx++ % 3];
+      return {
+        label: isBaseline
+          ? (dateOnly ? `Baseline — ${dateOnly}` : 'Baseline')
+          : dateOnly,
+        shortLabel: isBaseline
+          ? (dateOnly ? `Baseline — ${dateOnly}` : 'Baseline')
+          : dateOnly,
+        baseline: isBaseline,
+        color,
+      };
+    });
+});
+const pressureChartLegendItems = computed(() => pressureSeriesLegend.value.map((item) => ({
+  label: item.label,
+  color: item.color,
+  dashed: false,
+})));
+const isPressureCompareMode = computed(() => {
+  const activeSeries = pressureComparisonSeries.value.filter(
+    (series) => Array.isArray(series.chart_data) && series.chart_data.length > 0,
+  );
+  return activeSeries.length > 1;
+});
+
+function resetPressureHoverData() {
+  machineSamplingWithLimitsStore.hoverData = {
+    xAxisLabel: 'Timestamp',
+    xAxisValue: '',
+    yAxisLabel: 'Air Pressure',
+    yAxisValue: '',
+    xAxisUnits: 'DateTime',
+    yAxisUnits: 'Pa',
+  };
+}
+
+function formatDateForInput(dateObj) {
+  const year = dateObj.getFullYear();
+  const month = String(dateObj.getMonth() + 1).padStart(2, '0');
+  const day = String(dateObj.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function initializePressureLogDateRange() {
+  pressureDateRange.value = {
+    startDate: '',
+    endDate: '',
+  };
+}
+
+async function refreshPressureComparisonGraph() {
+  if (!isPressureSelected.value) {
+    return;
+  }
+
+  const selectedIds = [...selectedPressureLogFileIds.value];
+  if (selectedIds.length === 0 && !baselineLogFileId.value) {
+    machineSamplingWithLimitsStore.pressureComparisonSeries = [];
+    machineSamplingWithLimitsStore.chartData = [[0, 0]];
+    machineSamplingWithLimitsStore.chartFetchMessage = 'Choose one or more timestamps to view the graph.';
+    resetPressureHoverData();
+    return;
+  }
+
+  isPressureGraphLoading.value = true;
+  try {
+    await machineSamplingWithLimitsStore.fetchPressureComparisonData(selectedIds, true);
+  } catch (error) {
+    Toastify({
+      text: error.response?.data?.detail || 'Failed to load pressure comparison graph.',
+      duration: 5000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'red',
+    }).showToast();
+  } finally {
+    isPressureGraphLoading.value = false;
+  }
+}
+
+async function loadPressureLogFiles({ refreshGraph = true } = {}) {
+  isPressureLogListLoading.value = true;
+  try {
+    const response = await machineSamplingWithLimitsStore.fetchPressureLogFiles(
+      pressureDateRange.value.startDate,
+      pressureDateRange.value.endDate,
+    );
+    const validIds = new Set((response.log_files || []).map((item) => item.log_file_id));
+    machineSamplingWithLimitsStore.selectedPressureLogFileIds = selectedPressureLogFileIds.value
+      .filter((id) => validIds.has(id))
+      .slice(0, 3);
+    if (refreshGraph) {
+      await refreshPressureComparisonGraph();
+    }
+  } catch (error) {
+    resetPressureHoverData();
+    Toastify({
+      text: error.response?.data?.detail || 'Failed to load pressure timestamps.',
+      duration: 5000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'red',
+    }).showToast();
+  } finally {
+    isPressureLogListLoading.value = false;
+  }
+}
+
+async function handlePressureLogSelection(logFileId, checked) {
+  const currentIds = [...selectedPressureLogFileIds.value];
+  if (checked) {
+    if (currentIds.includes(logFileId)) {
+      return;
+    }
+    if (currentIds.length >= 3) {
+      Toastify({
+        text: 'You can select a maximum of 3 timestamps.',
+        duration: 4000,
+        close: true,
+        gravity: 'top',
+        position: 'right',
+        backgroundColor: 'red',
+      }).showToast();
+      return;
+    }
+    currentIds.push(logFileId);
+  } else {
+    const nextIds = currentIds.filter((id) => id !== logFileId);
+    currentIds.splice(0, currentIds.length, ...nextIds);
+  }
+
+  machineSamplingWithLimitsStore.selectedPressureLogFileIds = currentIds;
+  await refreshPressureComparisonGraph();
+}
+
+async function clearAllPressureSelections() {
+  if (!selectedPressureLogFileIds.value.length) {
+    return;
+  }
+  machineSamplingWithLimitsStore.selectedPressureLogFileIds = [];
+  await refreshPressureComparisonGraph();
+}
+
+async function handlePressureBaselineUpdate() {
+  if (!canUpdateBaseline.value) {
+    return;
+  }
+
+  isUpdatingPressureBaseline.value = true;
+  try {
+    await machineSamplingWithLimitsStore.updatePressureBaseline(selectedPressureLogFileIds.value[0]);
+    await loadPressureLogFiles({ refreshGraph: false });
+    await refreshPressureComparisonGraph();
+    Toastify({
+      text: 'Baseline updated successfully.',
+      duration: 3000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'green',
+    }).showToast();
+  } catch (error) {
+    Toastify({
+      text: error.response?.data?.detail || 'Failed to update baseline.',
+      duration: 5000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'red',
+    }).showToast();
+  } finally {
+    isUpdatingPressureBaseline.value = false;
+  }
+}
+
+async function handlePressureBaselineClear() {
+  if (!hasBaseline.value) {
+    return;
+  }
+
+  isUpdatingPressureBaseline.value = true;
+  try {
+    await machineSamplingWithLimitsStore.clearPressureBaseline();
+    await loadPressureLogFiles({ refreshGraph: false });
+    await refreshPressureComparisonGraph();
+    Toastify({
+      text: 'Baseline cleared.',
+      duration: 3000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'green',
+    }).showToast();
+  } catch (error) {
+    Toastify({
+      text: error.response?.data?.detail || 'Failed to clear baseline.',
+      duration: 5000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'red',
+    }).showToast();
+  } finally {
+    isUpdatingPressureBaseline.value = false;
+  }
+}
 
 onMounted(async () => {
   // Restore last machine/parameter if page was refreshed (otherwise defaults to T_H_OP150)
@@ -410,7 +729,9 @@ onMounted(async () => {
     isCycleTimeSelected.value = false;
     localStorage.setItem('isCycleTimeSelected', 'false');
     initializePressureDates();
-    await machineSamplingWithLimitsStore.fetchPressureMachineData();
+    initializePressureLogDateRange();
+    resetPressureHoverData();
+    await loadPressureLogFiles({ refreshGraph: true });
   } else {
     isCycleTimeSelected.value = false;
     localStorage.setItem('isCycleTimeSelected', 'false');
@@ -566,19 +887,39 @@ const updateCycleTimeLimits = async () => {
 };
 
 
+function formatElapsedHover(ms) {
+  const COMPARE_EPOCH_BASE = new Date(2000, 0, 1).getTime();
+  const elapsedMs = ms - COMPARE_EPOCH_BASE;
+  if (!Number.isFinite(elapsedMs)) {
+    return '';
+  }
+  if (elapsedMs >= 60000) {
+    return `${(elapsedMs / 60000).toFixed(2)} min`;
+  }
+  if (elapsedMs >= 1000) {
+    return `${(elapsedMs / 1000).toFixed(2)} s`;
+  }
+  return `${Math.round(elapsedMs)} ms`;
+}
+
 function OnHoverCallBack(hoverData){
   if (!hoverData?.length) return;
-  const xval = hoverData[0].xval;
-  const dateTime = typeof xval === 'number'
-    ? convertEpochToLocal(xval)
-    : String(xval);
+  const preferredPoint = hoverData.find((point) => point?.name && !String(point.name).includes('Limit') && point.yval != null) || hoverData[0];
+  const xval = preferredPoint.xval;
+  const isCompare = isPressureCompareMode.value;
+  const dateTime = isCompare
+    ? formatElapsedHover(xval)
+    : (typeof xval === 'number'
+      ? convertEpochToLocal(xval)
+      : String(xval));
+  const isPressure = isPressureSelected.value;
   machineSamplingWithLimitsStore.hoverData = {
     xAxisValue: dateTime,
-    yAxisValue: hoverData[0].yval,
-    xAxisLabel: machineSamplingWithLimitsStore.hoverData.xAxisLabel || 'Time',
-    yAxisLabel: machineSamplingWithLimitsStore.hoverData.yAxisLabel || 'Pressure',
-    xAxisUnits: machineSamplingWithLimitsStore.hoverData.xAxisUnits || 'IST',
-    yAxisUnits: machineSamplingWithLimitsStore.hoverData.yAxisUnits || '',
+    yAxisValue: preferredPoint.yval,
+    xAxisLabel: isCompare ? 'Elapsed Time' : (isPressure ? 'Timestamp' : (machineSamplingWithLimitsStore.hoverData.xAxisLabel || 'Time')),
+    yAxisLabel: isPressure ? 'Air Pressure' : (machineSamplingWithLimitsStore.hoverData.yAxisLabel || 'Value'),
+    xAxisUnits: isCompare ? 'From log start' : (isPressure ? 'DateTime (IST)' : (machineSamplingWithLimitsStore.hoverData.xAxisUnits || 'IST')),
+    yAxisUnits: isPressure ? 'Pa' : (machineSamplingWithLimitsStore.hoverData.yAxisUnits || ''),
   };
 }
 
@@ -588,7 +929,7 @@ function OnHoverCallBack(hoverData){
   <LayoutAuthenticatedSimple>
     <SectionMain>
 
-      <div class="container mx-auto flex flex-col space-y-4">
+      <div class="w-full px-3 md:px-4 xl:px-6 2xl:px-8 flex flex-col space-y-4">
 
         <div v-if="machineSamplingWithLimitsStore.alertMessage" 
         :class="{ 'alert': true, 'bg-emerald-500 border-black': machineSamplingWithLimitsStore.isSuccessMessage,
@@ -597,9 +938,182 @@ function OnHoverCallBack(hoverData){
         </div>
 
         <BlurryHorizontalDivider />
-        <div class="w-10 h-10">
-          <button @click="handleBack" class="w-full h-full flex items-center justify-center border-2 border-green-500 rounded-lg hover:bg-green-50 transition-colors">
-            <svg xmlns="http://www.w3.org/2000/svg" class="w-6 h-6 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <template v-if="isPressureSelected">
+          <div class="pressure-top-grid">
+            <div class="pressure-baseline-card">
+              <span class="pressure-card-label">Baseline</span>
+              <span class="pressure-vdivider" />
+              <span class="pressure-baseline-value">{{ baselineLogFileLabel }}</span>
+              <span class="pressure-vdivider" />
+              <button
+                type="button"
+                class="pressure-btn pressure-btn--primary"
+                :disabled="!canUpdateBaseline || isUpdatingPressureBaseline"
+                @click="handlePressureBaselineUpdate"
+              >
+                Update
+              </button>
+              <button
+                type="button"
+                class="pressure-btn pressure-btn--ghost"
+                :disabled="!hasBaseline || isUpdatingPressureBaseline"
+                @click="handlePressureBaselineClear"
+              >
+                Clear
+              </button>
+            </div>
+
+            <div class="pressure-kpi-row">
+              <div class="pressure-kpi-card pressure-kpi-card--machine">
+                <span class="pressure-kpi-label">Machine</span>
+                <span class="pressure-kpi-value">{{ machineSamplingWithLimitsStore.machine }}</span>
+              </div>
+              <div class="pressure-kpi-card pressure-kpi-card--param">
+                <span class="pressure-kpi-label">Parameter</span>
+                <span class="pressure-kpi-value">Air Pressure</span>
+              </div>
+              <div class="pressure-kpi-card pressure-kpi-card--warn">
+                <span class="pressure-kpi-label">Warning</span>
+                <span class="pressure-kpi-value">{{ warningLimit }}</span>
+              </div>
+              <div class="pressure-kpi-card pressure-kpi-card--crit">
+                <span class="pressure-kpi-label">Critical</span>
+                <span class="pressure-kpi-value">{{ criticalLimit }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="pressure-main-grid">
+            <div class="pressure-side-panel">
+              <div class="pressure-search-row">
+                <div class="pressure-date-field">
+                  <span class="pressure-date-field__prefix">From</span>
+                  <span class="pressure-date-field__divider" />
+                  <flat-pickr
+                    v-model="pressureDateRange.startDate"
+                    :config="pressureFromDateConfig"
+                    class="pressure-date-input"
+                    placeholder="dd-mm-yyyy"
+                    title="From date"
+                  />
+                  <button
+                    v-if="pressureDateRange.startDate"
+                    type="button"
+                    class="pressure-date-clear"
+                    title="Clear from date"
+                    @click="pressureDateRange.startDate = ''"
+                  >
+                    ×
+                  </button>
+                </div>
+                <span class="pressure-search-divider" />
+                <div class="pressure-date-field">
+                  <span class="pressure-date-field__prefix">To</span>
+                  <span class="pressure-date-field__divider" />
+                  <flat-pickr
+                    v-model="pressureDateRange.endDate"
+                    :config="pressureToDateConfig"
+                    class="pressure-date-input"
+                    placeholder="dd-mm-yyyy"
+                    title="To date"
+                  />
+                  <button
+                    v-if="pressureDateRange.endDate"
+                    type="button"
+                    class="pressure-date-clear"
+                    title="Clear to date"
+                    @click="pressureDateRange.endDate = ''"
+                  >
+                    ×
+                  </button>
+                </div>
+                <span class="pressure-search-divider" />
+                <button type="button" class="pressure-btn pressure-btn--primary" @click="loadPressureLogFiles()">
+                  Search
+                </button>
+              </div>
+
+              <div class="pressure-list-head">
+                <span class="pressure-list-head__check" />
+                <span class="pressure-list-head__time">Processed Time</span>
+                <button
+                  type="button"
+                  class="pressure-clear-all"
+                  :disabled="!hasPressureSelections"
+                  title="Clear all selected timestamps"
+                  @click="clearAllPressureSelections"
+                >
+                  Clear all
+                </button>
+              </div>
+
+              <div class="pressure-scroll-list">
+                <div v-if="isPressureLogListLoading" class="pressure-empty-msg">Loading timestamps...</div>
+                <div v-else-if="pressureLogFiles.length === 0" class="pressure-empty-msg">No timestamps found.</div>
+                <div
+                  v-for="row in pressureLogFiles"
+                  v-else
+                  :key="row.log_file_id"
+                  class="pressure-list-row pressure-list-row--normal"
+                >
+                  <span class="pressure-list-row__check">
+                    <input
+                      :checked="selectedPressureLogFileIds.includes(row.log_file_id)"
+                      type="checkbox"
+                      class="pressure-checkbox"
+                      @change="handlePressureLogSelection(row.log_file_id, $event.target.checked)"
+                    />
+                  </span>
+                  <span class="pressure-list-row__divider" />
+                  <span class="pressure-list-row__date">{{ formatProcessedDateOnly(row.time_stamp || row.processed_time) }}</span>
+                  <span class="pressure-list-row__divider" />
+                  <span class="pressure-list-row__clock">{{ formatProcessedTimeOnly(row.time_stamp || row.processed_time) }}</span>
+                </div>
+              </div>
+            </div>
+
+            <div class="pressure-graph-panel">
+              <div class="pressure-graph-head">
+                <h3 class="pressure-graph-title">Air Pressure Comparison</h3>
+                <div class="pressure-graph-hints">
+                  <span class="pressure-hint-chip">Scroll — zoom in / out</span>
+                  <span class="pressure-hint-chip">Drag — select range</span>
+                  <span class="pressure-hint-chip">Double-click / Reset — full view</span>
+                </div>
+              </div>
+
+              <div class="pressure-graph-body">
+                <div v-if="isPressureGraphLoading" class="pressure-graph-placeholder">
+                  Loading pressure graph...
+                </div>
+
+                <div v-else-if="!pressureHasChartSeries" class="pressure-graph-placeholder pressure-graph-placeholder--empty">
+                  {{ machineSamplingWithLimitsStore.chartFetchMessage || 'Select timestamps from the left panel to view the graph.' }}
+                </div>
+
+                <div v-else class="pressure-graph-canvas-wrap">
+                  <DyLineChartWithLimits
+                    :data="chartData"
+                    :series-data="pressureComparisonSeries"
+                    :external-legend="pressureChartLegendItems"
+                    :warningLimit="warningLimit"
+                    :criticalLimit="criticalLimit"
+                    :step-plot="false"
+                    :hide-hints="true"
+                    :borderless="true"
+                    :show-limits="false"
+                    @data-hovered="OnHoverCallBack"
+                  />
+                </div>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template v-else>
+        <div class="w-8 h-8 mb-2">
+          <button @click="handleBack" class="w-full h-full flex items-center justify-center border border-green-500 rounded hover:bg-green-50 transition-colors" title="Back">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
             </svg>
           </button>
@@ -792,6 +1306,7 @@ function OnHoverCallBack(hoverData){
 
         <BlurryHorizontalDivider />
         <GraphLegend v-if="!isCycleTimeSelected" :data="hoverData"></GraphLegend>
+        </template>
       </div>
 
     </SectionMain>
@@ -799,6 +1314,517 @@ function OnHoverCallBack(hoverData){
 </template>
 
 <style scoped>
+.pressure-top-grid,
+.pressure-main-grid {
+  display: grid;
+  grid-template-columns: minmax(280px, 32%) minmax(0, 68%);
+  gap: 12px;
+  align-items: stretch;
+}
+
+.pressure-top-grid {
+  align-items: stretch;
+}
+
+/* shadcn/ui Card–style surfaces */
+.pressure-baseline-card,
+.pressure-kpi-card {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 56px;
+  padding: 0 16px;
+  border: 2.5px solid #000;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+}
+
+.pressure-kpi-row {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  min-width: 0;
+}
+
+.pressure-card-label,
+.pressure-kpi-label {
+  font-size: 14px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: rgb(71, 85, 105);
+  white-space: nowrap;
+}
+
+.pressure-baseline-value,
+.pressure-kpi-value {
+  font-size: 15px;
+  font-weight: 700;
+  color: rgb(15, 23, 42);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pressure-baseline-value {
+  flex: 1;
+  min-width: 0;
+}
+
+.pressure-kpi-card {
+  flex-direction: row;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pressure-kpi-label {
+  flex-shrink: 0;
+}
+
+.pressure-kpi-value {
+  text-align: right;
+  margin-left: auto;
+  min-width: 0;
+}
+
+/* Bold colored borders — KPI cards only */
+.pressure-kpi-card--machine {
+  border: 3px solid rgb(59, 130, 246);
+  border-left-width: 6px;
+  background: rgb(239, 246, 255);
+}
+.pressure-kpi-card--param {
+  border: 3px solid rgb(16, 185, 129);
+  border-left-width: 6px;
+  background: rgb(236, 253, 245);
+}
+.pressure-kpi-card--warn {
+  border: 3px solid rgb(245, 158, 11);
+  border-left-width: 6px;
+  background: rgb(255, 251, 235);
+}
+.pressure-kpi-card--crit {
+  border: 3px solid rgb(239, 68, 68);
+  border-left-width: 6px;
+  background: rgb(254, 242, 242);
+}
+
+.pressure-vdivider {
+  width: 1px;
+  align-self: stretch;
+  background: rgb(203, 213, 225);
+  margin: 6px 0;
+}
+
+.pressure-btn {
+  font-size: 11px;
+  font-weight: 700;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+.pressure-btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pressure-btn--primary {
+  background: rgb(2, 132, 199);
+  border-color: rgb(2, 132, 199);
+  color: #fff;
+  border-radius: 0.5rem;
+}
+
+.pressure-btn--ghost {
+  background: #fff;
+  border-color: #000;
+  color: rgb(51, 65, 85);
+  border-radius: 0.5rem;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+}
+
+.pressure-main-grid {
+  height: min(84vh, 880px);
+}
+
+.pressure-side-panel,
+.pressure-graph-panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border: 2.5px solid #000;
+  border-radius: 0.75rem;
+  background: #fff;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  overflow: hidden;
+}
+
+.pressure-search-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgb(226, 232, 240);
+  background: rgb(248, 250, 252);
+}
+
+.pressure-search-divider {
+  width: 1px;
+  align-self: stretch;
+  background: rgb(203, 213, 225);
+  margin: 2px 2px;
+  flex-shrink: 0;
+}
+
+.pressure-date-field {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  border: 2.5px solid #000;
+  border-radius: 0.5rem;
+  background: #fff;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+  padding-left: 6px;
+}
+
+.pressure-date-field__prefix {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  color: rgb(100, 116, 139);
+  flex-shrink: 0;
+}
+
+.pressure-date-field__divider {
+  width: 1px;
+  align-self: stretch;
+  background: rgb(203, 213, 225);
+  margin: 3px 6px;
+  flex-shrink: 0;
+}
+
+.pressure-date-input {
+  flex: 1;
+  min-width: 0;
+  border: none !important;
+  outline: none;
+  background: transparent !important;
+  padding: 6px 22px 6px 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgb(15, 23, 42);
+  box-shadow: none !important;
+}
+
+.pressure-date-field :deep(.flatpickr-input),
+.pressure-date-field :deep(.form-control) {
+  flex: 1;
+  min-width: 0;
+  width: 100%;
+  border: none !important;
+  outline: none !important;
+  background: transparent !important;
+  box-shadow: none !important;
+  padding: 6px 22px 6px 2px;
+  font-size: 13px;
+  font-weight: 700;
+  color: rgb(15, 23, 42);
+}
+
+.pressure-date-clear {
+  position: absolute;
+  right: 22px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 14px;
+  height: 14px;
+  border: none;
+  background: rgb(226, 232, 240);
+  color: rgb(71, 85, 105);
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.pressure-date-clear:hover {
+  background: rgb(248, 113, 113);
+  color: #fff;
+}
+
+.pressure-list-head {
+  display: grid;
+  grid-template-columns: 28px 1fr auto;
+  align-items: center;
+  gap: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid rgb(203, 213, 225);
+  background: rgb(241, 245, 249);
+  font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: rgb(71, 85, 105);
+}
+
+.pressure-list-head__check {
+  text-align: center;
+}
+
+.pressure-clear-all {
+  border: 2.5px solid #000;
+  border-radius: 0.5rem;
+  background: #fff;
+  color: rgb(71, 85, 105);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  padding: 3px 8px;
+  cursor: pointer;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+}
+
+.pressure-clear-all:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pressure-clear-all:not(:disabled):hover {
+  border-color: rgb(245, 158, 11);
+  color: rgb(180, 83, 9);
+  background: rgb(255, 251, 235);
+}
+
+.pressure-scroll-list {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.pressure-scroll-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.pressure-scroll-list::-webkit-scrollbar-thumb {
+  background: rgb(51, 65, 85);
+}
+
+.pressure-list-row {
+  display: flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 8px;
+  border-bottom: 1px solid rgb(226, 232, 240);
+  font-size: 13px;
+  font-weight: 600;
+  color: rgb(30, 41, 59);
+}
+
+.pressure-list-row:hover {
+  background: rgb(248, 250, 252);
+}
+
+.pressure-list-row--baseline {
+  background: rgb(236, 253, 245);
+  border-left: 3px solid rgb(16, 185, 129);
+}
+
+.pressure-list-row--normal {
+  background: rgb(255, 251, 235);
+  border-left: 3px solid rgb(245, 158, 11);
+}
+
+.pressure-list-row__check {
+  width: 28px;
+  flex-shrink: 0;
+  display: flex;
+  justify-content: center;
+}
+
+.pressure-list-row__divider {
+  width: 1px;
+  align-self: stretch;
+  background: rgb(203, 213, 225);
+  margin: 6px 8px;
+}
+
+.pressure-list-row__date {
+  flex-shrink: 0;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.pressure-list-row__clock {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 600;
+}
+
+.pressure-list-row__time {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pressure-list-row__badge {
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  color: rgb(4, 120, 87);
+  white-space: nowrap;
+}
+
+.pressure-checkbox {
+  width: 14px;
+  height: 14px;
+}
+
+.pressure-empty-msg {
+  padding: 12px 10px;
+  font-size: 11px;
+  color: rgb(100, 116, 139);
+}
+
+.pressure-graph-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgb(226, 232, 240);
+  background: rgb(248, 250, 252);
+}
+
+.pressure-graph-title {
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  color: rgb(15, 23, 42);
+  white-space: nowrap;
+  margin: 0;
+}
+
+.pressure-graph-hints {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-left: auto;
+}
+
+.pressure-hint-chip {
+  font-size: 10px;
+  font-weight: 600;
+  color: rgb(51, 65, 85);
+  background: rgb(255, 255, 255);
+  border: 2.5px solid #000;
+  border-radius: 0.5rem;
+  padding: 3px 8px;
+  white-space: nowrap;
+  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.04);
+}
+
+.pressure-graph-body {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: rgb(248, 250, 252);
+  display: flex;
+  flex-direction: column;
+}
+
+.pressure-graph-canvas-wrap,
+.pressure-graph-placeholder {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.pressure-graph-canvas-wrap :deep(.dygraph-chart-panel) {
+  flex: 1;
+  min-height: 0;
+  height: 100%;
+}
+
+.pressure-graph-canvas-wrap :deep(.dygraph-chart-body) {
+  flex: 1;
+  min-height: 0;
+  height: auto;
+  max-height: none;
+}
+
+.pressure-graph-canvas-wrap :deep(.dygraph-chart-plot-area) {
+  overflow: visible;
+  min-height: 560px;
+}
+
+.pressure-graph-canvas-wrap :deep(.dygraph-chart-plot-area),
+.pressure-graph-canvas-wrap :deep(.dygraph-chart-canvas) {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  max-height: none;
+}
+
+.pressure-graph-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  font-size: 12px;
+  color: rgb(100, 116, 139);
+}
+
+.pressure-graph-placeholder--empty {
+  border: 2.5px dashed #000;
+  border-radius: 0.75rem;
+  margin: 8px;
+  background: rgb(248, 250, 252);
+}
+
+@media (max-width: 1280px) {
+  .pressure-top-grid,
+  .pressure-main-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .pressure-kpi-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .pressure-main-grid {
+    height: auto;
+  }
+
+  .pressure-side-panel {
+    height: 360px;
+  }
+
+  .pressure-graph-panel {
+    height: min(70vh, 640px);
+  }
+}
+
 /* Tailwind CSS classes for animation */
 @keyframes slideIn {
   from {
@@ -815,4 +1841,118 @@ function OnHoverCallBack(hoverData){
   animation: slideIn 0.5s ease-out;
 }
 
+</style>
+
+<style>
+/* Flatpickr calendar is appended to body — keep styles global but namespaced */
+.pressure-fp-calendar.flatpickr-calendar {
+  border: 2.5px solid #000;
+  border-radius: 0.75rem;
+  box-shadow: 0 12px 28px rgba(15, 23, 42, 0.18);
+  padding: 10px 10px 8px;
+  width: 308px;
+  font-family: inherit;
+}
+
+.pressure-fp-calendar .flatpickr-months {
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.pressure-fp-calendar .flatpickr-month {
+  color: #0f172a;
+  fill: #0f172a;
+  height: 36px;
+}
+
+.pressure-fp-calendar .flatpickr-current-month {
+  font-size: 14px;
+  font-weight: 800;
+  padding-top: 4px;
+}
+
+.pressure-fp-calendar .flatpickr-prev-month,
+.pressure-fp-calendar .flatpickr-next-month {
+  padding: 6px;
+  border-radius: 0.5rem;
+}
+
+.pressure-fp-calendar .flatpickr-prev-month:hover,
+.pressure-fp-calendar .flatpickr-next-month:hover {
+  background: #f1f5f9;
+}
+
+.pressure-fp-calendar .flatpickr-prev-month svg,
+.pressure-fp-calendar .flatpickr-next-month svg {
+  width: 14px;
+  height: 14px;
+  fill: #0f172a;
+}
+
+.pressure-fp-calendar .flatpickr-weekdays {
+  height: 28px;
+  margin-top: 2px;
+}
+
+.pressure-fp-calendar .flatpickr-weekday {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.pressure-fp-calendar .flatpickr-days {
+  width: 100%;
+}
+
+.pressure-fp-calendar .dayContainer {
+  width: 100%;
+  min-width: 100%;
+  max-width: 100%;
+}
+
+.pressure-fp-calendar .flatpickr-day {
+  max-width: 38px;
+  height: 38px;
+  line-height: 38px;
+  margin: 1px 0;
+  border-radius: 0.5rem;
+  border: none;
+  font-size: 13px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.pressure-fp-calendar .flatpickr-day:hover {
+  background: #e2e8f0;
+  border-color: transparent;
+}
+
+.pressure-fp-calendar .flatpickr-day.today {
+  border: 2px solid #0ea5e9;
+  background: transparent;
+  color: #0369a1;
+}
+
+.pressure-fp-calendar .flatpickr-day.selected,
+.pressure-fp-calendar .flatpickr-day.startRange,
+.pressure-fp-calendar .flatpickr-day.endRange {
+  background: #0f172a !important;
+  border-color: #0f172a !important;
+  color: #fff !important;
+  box-shadow: none;
+}
+
+.pressure-fp-calendar .flatpickr-day.flatpickr-disabled,
+.pressure-fp-calendar .flatpickr-day.prevMonthDay,
+.pressure-fp-calendar .flatpickr-day.nextMonthDay {
+  color: #94a3b8;
+  font-weight: 600;
+}
+
+.pressure-fp-calendar .flatpickr-day.inRange {
+  background: #e2e8f0;
+  box-shadow: none;
+  border-color: transparent;
+}
 </style>
