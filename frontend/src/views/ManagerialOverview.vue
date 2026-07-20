@@ -1255,20 +1255,32 @@ function switchPlant(target) {
 }
 
 function logParameterDetails(param, machineName, parameterGroup, isPressureMachine = false) {
+  const isPressure = (
+    isPressureMachine
+    || param?.is_pressure_machine === true
+    || param?.actual_parameter_name === 'AIR_PRESSURE'
+    || param?.parameter_group === 'AIR_PRESSURE'
+    || parameterGroup === 'AIR_PRESSURE'
+  );
+
   const details = {
     machine: machineName,
-    actualParameterName: param.actual_parameter_name,
-    parameterGroup: param.parameter_group || parameterGroup,
-    displayName: param.display_name,
+    actualParameterName: isPressure ? 'AIR_PRESSURE' : param.actual_parameter_name,
+    parameterGroup: isPressure ? 'AIR_PRESSURE' : (param.parameter_group || parameterGroup),
+    displayName: isPressure ? '' : param.display_name,
     latest_update_time: param.latest_update_time,
     latest_update_time_ms: param.latest_update_time_ms,
-    isPressureMachine: isPressureMachine || param.is_pressure_machine === true,
-    is_pressure_machine: isPressureMachine || param.is_pressure_machine === true,
+    isPressureMachine: isPressure,
+    is_pressure_machine: isPressure,
   };
   machineSamplingWithLimitsStore.setMachineDetails(details);
   machineSamplingWithLimitsStore.setLastSelectedParameter(details);
   navigationHistoryStore.addToHistory(router.currentRoute.value);
-  router.push('/machine-level-sampling');
+  if (isPressure) {
+    router.push('/air-pressure-sampling');
+  } else {
+    router.push('/machine-level-sampling');
+  }
 }
 
 function getParameterGroup(machineName, parameterName) {

@@ -1,14 +1,18 @@
 <script setup>
-import { backendApi } from '@/services/apiServices';
-import { computed, ref, onMounted } from "vue";
+import { computed, ref, onBeforeMount, onMounted } from "vue";
+
+import axios from 'axios';
+import flatPickr from 'vue-flatpickr-component';
+import 'flatpickr/dist/flatpickr.css';
 
 import DyLineChartWithLimits from "@/components/Charts/DyLineChartWithLimits.vue";
 import TimePickerFlatEmitter from "@/components/TimePickerFlatEmitter.vue";
 import SectionMain from "@/components/SectionMain.vue";
+import CardBox from "@/components/CardBox.vue";
+import BaseButton from "@/components/BaseButton.vue";
 import GraphLegend from "@/components/GraphLegend.vue";
 import LayoutAuthenticatedSimple from "@/layouts/LayoutAuthenticatedSimple.vue";
-import AirPressureSamplingView from "@/views/AirPressureSamplingView.vue";
-
+import BlurryHorizontalDivider from "@/components/BlurryHorizontalDivider.vue";
 import { use } from 'echarts/core';
 import { BarChart } from 'echarts/charts';
 import { GridComponent, TooltipComponent } from 'echarts/components';
@@ -21,18 +25,16 @@ use([GridComponent, TooltipComponent, BarChart, CanvasRenderer]);
 import Toastify from 'toastify-js';
 import 'toastify-js/src/toastify.css';
 
+import CardBoxWidgetPlainWrap from "@/components/CardBoxWidgetPlainWrap.vue";
 import { useNavigationHistoryStore } from '@/stores/navigationHistoryStore';
-import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore'; 
+
+import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore';
 import { useActivityStore } from '@/stores/ActivityStore.js'; 
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
 const machineSamplingWithLimitsStore = useMachineSamplingWithLimitsStore();
 const ActivityStore = useActivityStore();
-const navigationHistoryStore = useNavigationHistoryStore();
-
-// Check if pressure context is active
-const isPressureSelected = computed(() => machineSamplingWithLimitsStore.isPressureContext);
 
 // Cycle time specific state
 const isCycleTimeSelected = ref(false);
@@ -154,6 +156,7 @@ const hasChartData = computed(() => {
   if (!Array.isArray(data) || data.length === 0) {
     return false;
   }
+  // Store uses [[0, 0]] as an error placeholder
   if (data.length === 1 && Number(data[0]?.[0]) === 0 && Number(data[0]?.[1]) === 0) {
     return false;
   }
@@ -188,6 +191,7 @@ const toPickerDatetime = computed(() => {
   return new Date();
 });
 
+/** Always sync store From/To from the visible pickers before API call */
 function syncDatesFromPickers() {
   const fromEpoch = fromPickerRef.value?.getEpoch?.();
   const toEpoch = toPickerRef.value?.getEpoch?.();
@@ -197,6 +201,7 @@ function syncDatesFromPickers() {
   if (Number.isFinite(toEpoch)) {
     machineSamplingWithLimitsStore.selectedDates.to = toEpoch;
   }
+  machineSamplingWithLimitsStore.normalizeInvertedPressureTimeRange();
 }
 
 const handleQuerySubmit = async () => {
@@ -228,6 +233,8 @@ const handleQuerySubmitActivity = async () => {
   await ActivityStore.fetchActivityDataParameter(machineSamplingWithLimitsStore.actualParameterName);
   router.push("/corrective-activity");
 };
+
+const navigationHistoryStore = useNavigationHistoryStore();
 
 const handleBack = () => {
   const previous = navigationHistoryStore.history.length
@@ -262,6 +269,55 @@ const handleToDateChange = (dateValue) => {
   machineSamplingWithLimitsStore.persistSamplingSession();
 };
 
+onBeforeMount(() => {
+  if (!machineSamplingWithLimitsStore.lastSelectedParameter) {
+    machineSamplingWithLimitsStore.restoreSamplingSession();
+  }
+});
+
+function convertEpochToLocal(epochTimestamp) {
+  const date = new Date(epochTimestamp);
+  const options = {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    timeZoneName: 'short',
+  };
+  return date.toLocaleString('en-IN', options);
+}
+
+onMounted(async () => {
+  if (!machineSamplingWithLimitsStore.lastSelectedParameter) {
+    machineSamplingWithLimitsStore.restoreSamplingSession();
+  }
+
+  const isCycleTimeFromStorage = localStorage.getItem('isCycleTimeSelected') === 'true';
+
+  if (machineSamplingWithLimitsStore.parameterGroup === 'CYCLE_TIME' || isCycleTimeFromStorage) {
+    isCycleTimeSelected.value = true;
+    localStorage.setItem('isCycleTimeSelected', 'true');
+    const currentDate = new Date();
+    machineSamplingWithLimitsStore.selectedDates.to = currentDate.getTime();
+    const oneHourEarlier = subtractHours(currentDate, 1);
+    machineSamplingWithLimitsStore.selectedDates.from = oneHourEarlier.getTime();
+    await fetchCycleTimeData();
+  } else {
+    isCycleTimeSelected.value = false;
+    localStorage.setItem('isCycleTimeSelected', 'false');
+    const currentDate = new Date();
+    machineSamplingWithLimitsStore.selectedDates.to = currentDate.getTime();
+    const oneHourEarlier = subtractHours(new Date(currentDate), 1);
+    machineSamplingWithLimitsStore.selectedDates.from = oneHourEarlier.getTime();
+    if (machineSamplingWithLimitsStore.lastSelectedParameter && machineSamplingWithLimitsStore.machine) {
+      machineSamplingWithLimitsStore.setMachineDetails(machineSamplingWithLimitsStore.lastSelectedParameter);
+      await machineSamplingWithLimitsStore.fetchMachineParameterData();
+    }
+  }
+});
+
 const fetchCycleTimeData = async () => {
   isCycleTimeLoading.value = true;
   cycleTimeError.value = null;
@@ -283,9 +339,9 @@ const fetchCycleTimeData = async () => {
     const fromTimeStr = formatDate(fromTime);
     const toTimeStr = formatDate(toTime);
 
-    const url = `/cycle-time/machine/${encodeURIComponent(machineName)}?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
+    const url = `http://172.18.100.87:8000/api/v1/cycle-time/machine/${encodeURIComponent(machineName)}?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
 
-    const response = await backendApi.get(url);
+    const response = await axios.get(url);
     cycleTimeData.value = response.data;
     
     if (response.data.warning_limit !== null && response.data.critical_limit !== null) {
@@ -293,6 +349,7 @@ const fetchCycleTimeData = async () => {
         warning: response.data.warning_limit,
         critical: response.data.critical_limit
       };
+      
       cycleTimeWarningInput.value = response.data.warning_limit;
       cycleTimeCriticalInput.value = response.data.critical_limit;
     }
@@ -351,9 +408,9 @@ const updateCycleTimeLimits = async () => {
     }
     
     const machineName = machineSamplingWithLimitsStore.machine;
-    const url = `/cycle-time/limits/${encodeURIComponent(machineName)}?warning_limit=${warningLimit}&critical_limit=${criticalLimit}`;
+    const url = `http://172.18.100.87:8000/api/v1/cycle-time/limits/${encodeURIComponent(machineName)}?warning_limit=${warningLimit}&critical_limit=${criticalLimit}`;
     
-    const response = await backendApi.put(url);
+    const response = await axios.put(url);
     
     cycleTimeLimits.value = {
       warning: warningLimit,
@@ -393,7 +450,7 @@ function OnHoverCallBack(hoverData){
   const preferredPoint = hoverData.find((point) => point?.name && !String(point.name).includes('Limit') && point.yval != null) || hoverData[0];
   const xval = preferredPoint.xval;
   const dateTime = typeof xval === 'number'
-    ? new Date(xval).toLocaleString('en-IN')
+    ? convertEpochToLocal(xval)
     : String(xval);
   machineSamplingWithLimitsStore.hoverData = {
     xAxisValue: dateTime,
@@ -404,488 +461,213 @@ function OnHoverCallBack(hoverData){
     yAxisUnits: machineSamplingWithLimitsStore.hoverData.yAxisUnits || '',
   };
 }
-
-onMounted(async () => {
-  if (isPressureSelected.value) {
-    return;
-  }
-  if (!machineSamplingWithLimitsStore.lastSelectedParameter) {
-    machineSamplingWithLimitsStore.restoreSamplingSession();
-  }
-
-  const isCycleTimeFromStorage = localStorage.getItem('isCycleTimeSelected') === 'true';
-
-  if (machineSamplingWithLimitsStore.parameterGroup === 'CYCLE_TIME' || isCycleTimeFromStorage) {
-    isCycleTimeSelected.value = true;
-    localStorage.setItem('isCycleTimeSelected', 'true');
-    const currentDate = new Date();
-    machineSamplingWithLimitsStore.selectedDates.to = currentDate.getTime();
-    const oneHourEarlier = subtractHours(currentDate, 1);
-    machineSamplingWithLimitsStore.selectedDates.from = oneHourEarlier.getTime();
-    await fetchCycleTimeData();
-  } else {
-    isCycleTimeSelected.value = false;
-    localStorage.setItem('isCycleTimeSelected', 'false');
-    const currentDate = new Date();
-    machineSamplingWithLimitsStore.selectedDates.to = currentDate.getTime();
-    const oneHourEarlier = subtractHours(new Date(currentDate), 1);
-    machineSamplingWithLimitsStore.selectedDates.from = oneHourEarlier.getTime();
-    if (machineSamplingWithLimitsStore.lastSelectedParameter && machineSamplingWithLimitsStore.machine) {
-      machineSamplingWithLimitsStore.setMachineDetails(machineSamplingWithLimitsStore.lastSelectedParameter);
-      await machineSamplingWithLimitsStore.fetchMachineParameterData();
-    }
-  }
-});
 </script>
 
 <template>
-  <AirPressureSamplingView v-if="isPressureSelected" />
-  <LayoutAuthenticatedSimple v-else>
-    <SectionMain class="mls-section-main">
+  <LayoutAuthenticatedSimple>
+    <SectionMain>
+      <div class="w-full px-3 md:px-4 xl:px-6 2xl:px-8 flex flex-col space-y-4">
+        <div v-if="machineSamplingWithLimitsStore.alertMessage" 
+          :class="{ 'alert': true, 'bg-emerald-500 border-black': machineSamplingWithLimitsStore.isSuccessMessage,
+          'bg-red-600 border-black': !machineSamplingWithLimitsStore.isSuccessMessage }">
+          {{ machineSamplingWithLimitsStore.alertMessage }}
+        </div>
 
-      <!-- Alert Toast -->
-      <div v-if="machineSamplingWithLimitsStore.alertMessage"
-        :class="['mls-alert', machineSamplingWithLimitsStore.isSuccessMessage ? 'mls-alert--ok' : 'mls-alert--error']">
-        {{ machineSamplingWithLimitsStore.alertMessage }}
-      </div>
+        <BlurryHorizontalDivider />
 
-      <!-- Back button + KPI strip -->
-      <div class="mls-nonpressure-header">
-        <button @click="handleBack" class="mls-back-btn" title="Back">
-          <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2.5" stroke="currentColor" class="mls-back-icon">
-            <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 19.5L3 12m0 0l7.5-7.5M3 12h18" />
-          </svg>
-          BACK
-        </button>
+        <div class="w-8 h-8 mb-2">
+          <button @click="handleBack" class="w-full h-full flex items-center justify-center border border-green-500 rounded hover:bg-green-50 transition-colors" title="Back">
+            <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-green-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18" />
+            </svg>
+          </button>
+        </div>
 
-        <!-- KPI info bar -->
-        <div class="mls-np-kpi-bar">
-          <div class="mls-np-kpi-item mls-np-kpi--machine">
-            <span class="mls-np-kpi-tag">MACHINE</span>
-            <span class="mls-np-kpi-val">{{ machineSamplingWithLimitsStore.machine }}</span>
-          </div>
-          <div class="mls-np-kpi-item mls-np-kpi--param">
-            <span class="mls-np-kpi-tag">PARAMETER GROUP</span>
-            <span class="mls-np-kpi-val">{{ machineSamplingWithLimitsStore.parameterGroup }}</span>
-          </div>
-          <div v-if="!isCycleTimeSelected" class="mls-np-kpi-item">
-            <span class="mls-np-kpi-tag">PARAMETER NAME</span>
-            <span class="mls-np-kpi-val">{{ machineSamplingWithLimitsStore.actualParameterName }}</span>
-          </div>
-          <div v-if="isCycleTimeSelected" class="mls-np-kpi-item">
-            <span class="mls-np-kpi-tag">CYCLE TIME</span>
-            <span class="mls-np-kpi-val">{{ isCycleTimeLoading ? 'Loading...' : (cycleTimeData ? cycleTimeData.cycle_time_value + 's' : 'N/A') }}</span>
-          </div>
-          <div v-if="isCycleTimeSelected && cycleTimeData" class="mls-np-kpi-item"
-            :class="{
-              'mls-np-kpi--crit': cycleTimeData.machine_state === 'CRITICAL',
-              'mls-np-kpi--warn': cycleTimeData.machine_state === 'WARNING',
-              'mls-np-kpi--ok': cycleTimeData.machine_state === 'OK'
-            }">
-            <span class="mls-np-kpi-tag">STATE</span>
-            <span class="mls-np-kpi-val">{{ cycleTimeData.machine_state }}</span>
-          </div>
-
-          <div v-if="isCycleTimeSelected" class="mls-np-kpi-item mls-np-kpi--warn">
-            <span class="mls-np-kpi-tag">WARNING LIMIT</span>
-            <div class="mls-limit-edit-row">
-              <input v-model="cycleTimeWarningInput" type="number" class="mls-limit-input" />
-              <button @click="updateCycleTimeLimits" class="mls-limit-update-btn">UPDATE</button>
+        <!-- Display machine information Start -->
+        <div class="grid grid-cols-1 gap-6 lg:grid-cols-5 mb-6">
+          <CardBoxWidgetPlainWrap 
+            label="Machine Name"
+            :parameter-value="machineSamplingWithLimitsStore.machine">
+          </CardBoxWidgetPlainWrap>
+          <CardBoxWidgetPlainWrap 
+            label="Parameter Group"
+            :parameter-value="machineSamplingWithLimitsStore.parameterGroup">
+          </CardBoxWidgetPlainWrap>
+          <CardBoxWidgetPlainWrap 
+            v-if="!isCycleTimeSelected"
+            label="Parameter Name"
+            :parameter-value="machineSamplingWithLimitsStore.actualParameterName">
+          </CardBoxWidgetPlainWrap>
+          <CardBoxWidgetPlainWrap 
+            v-if="isCycleTimeSelected"
+            label="Current Cycle Time"
+            :parameter-value="isCycleTimeLoading ? 'Loading...' : (cycleTimeData ? cycleTimeData.cycle_time_value + 's' : 'N/A')">
+          </CardBoxWidgetPlainWrap>
+          <CardBoxWidgetPlainWrap 
+            v-if="isCycleTimeSelected"
+            label="Warning Limit:">
+            <div class="flex flex-row">
+              <div class="relative mt-2">
+                <input v-model="cycleTimeWarningInput" type="number" class="w-full h-8 p-2 border-2 border-black rounded-lg" />
+              </div>
+              <button @click="updateCycleTimeLimits" class="text-blue-500 mx-2 mt-2">
+                <img class="w-12" src="@/assets/icons/update.svg" alt="">
+              </button>
             </div>
-          </div>
-          <div v-if="isCycleTimeSelected" class="mls-np-kpi-item mls-np-kpi--crit">
-            <span class="mls-np-kpi-tag">CRITICAL LIMIT</span>
-            <div class="mls-limit-edit-row">
-              <input v-model="cycleTimeCriticalInput" type="number" class="mls-limit-input" />
-              <button @click="updateCycleTimeLimits" class="mls-limit-update-btn">UPDATE</button>
+          </CardBoxWidgetPlainWrap>
+          <CardBoxWidgetPlainWrap 
+            v-if="!isCycleTimeSelected"
+            label="Warning Limit:">
+            <div class="flex flex-row">
+              <div class="relative mt-2">
+                <input v-model="warningInput" type="number" class="w-full h-8 p-2 border-2 border-black rounded-lg" />
+              </div>
+              <button @click="updateWarning" class="text-blue-500 mx-2 mt-2">
+                <img class="w-12" src="@/assets/icons/update.svg" alt="">
+              </button>
             </div>
-          </div>
+          </CardBoxWidgetPlainWrap>
 
-          <div v-if="!isCycleTimeSelected" class="mls-np-kpi-item mls-np-kpi--warn">
-            <span class="mls-np-kpi-tag">WARNING LIMIT</span>
-            <div class="mls-limit-edit-row">
-              <input v-model="warningInput" type="number" class="mls-limit-input" />
-              <button @click="updateWarning" class="mls-limit-update-btn">SET</button>
+          <CardBoxWidgetPlainWrap 
+            v-if="isCycleTimeSelected"
+            label="Critical Limit:">
+            <div class="flex flex-row">
+              <div class="relative mt-2">
+                <input v-model="cycleTimeCriticalInput" type="number" class="w-full h-8 p-2 border-2 border-black rounded-lg" />
+              </div>
+              <button @click="updateCycleTimeLimits" class="text-blue-500 mx-2 mt-2">
+                <img class="w-12" src="@/assets/icons/update.svg" alt="">
+              </button>
             </div>
-          </div>
-          <div v-if="!isCycleTimeSelected" class="mls-np-kpi-item mls-np-kpi--crit">
-            <span class="mls-np-kpi-tag">CRITICAL LIMIT</span>
-            <div class="mls-limit-edit-row">
-              <input v-model="criticalInput" type="number" class="mls-limit-input" />
-              <button @click="updateCritical" class="mls-limit-update-btn">SET</button>
+          </CardBoxWidgetPlainWrap>
+          <CardBoxWidgetPlainWrap 
+            v-if="!isCycleTimeSelected"
+            label="Critical Limit:">
+            <div class="flex flex-row">
+              <div class="relative mt-2">
+                <input v-model="criticalInput" type="number" class="w-full h-8 p-2 border-2 border-black rounded-lg" />
+              </div>
+              <button @click="updateCritical" class="text-blue-500 mx-2 mt-2">
+                <img class="w-12" src="@/assets/icons/update.svg" alt="">
+              </button>
             </div>
+          </CardBoxWidgetPlainWrap>
+        </div>
+
+        <BlurryHorizontalDivider />
+
+        <div class="flex justify-normal">
+          <div>
+            <label class="block mb-2 text-gray-700">From</label>
+            <TimePickerFlatEmitter
+              ref="fromPickerRef"
+              :defaultDatetime="fromPickerDatetime"
+              type="from"
+              @date-change="handleFromDateChange"
+            />
+          </div>
+
+          <div class="ml-8">
+            <label class="block mb-2 text-gray-700">To</label>
+            <TimePickerFlatEmitter
+              ref="toPickerRef"
+              :defaultDatetime="toPickerDatetime"
+              type="to"
+              @date-change="handleToDateChange"
+            />
+          </div>
+
+          <div class="flex flex-col items-center justify-end ml-8">
+            <BaseButton type="submit" color="info" label="Submit" @click="handleQuerySubmit" />
+          </div>
+
+          <div v-if="isCycleTimeSelected && cycleTimeData" class="ml-8 flex flex-col justify-center">
+            <label class="block mb-2 text-gray-700">Machine State</label>
+            <span
+              :class="{
+                'text-red-600 font-semibold': cycleTimeData.machine_state === 'CRITICAL',
+                'text-yellow-600 font-semibold': cycleTimeData.machine_state === 'WARNING',
+                'text-green-600 font-semibold': cycleTimeData.machine_state === 'OK'
+              }"
+            >
+              {{ cycleTimeData.machine_state }}
+            </span>
+          </div>
+
+          <div v-if="!isCycleTimeSelected" class="flex flex-col items-center justify-end ml-8">
+            <BaseButton type="submit" color="info" label="View Activity" @click="handleQuerySubmitActivity()" />
           </div>
         </div>
-      </div>
 
-      <!-- Time picker row -->
-      <div class="mls-np-time-row">
-        <div class="mls-np-time-label">FROM</div>
-        <TimePickerFlatEmitter
-          ref="fromPickerRef"
-          :defaultDatetime="fromPickerDatetime"
-          type="from"
-          @date-change="handleFromDateChange"
-        />
-        <div class="mls-np-time-sep" />
-        <div class="mls-np-time-label">TO</div>
-        <TimePickerFlatEmitter
-          ref="toPickerRef"
-          :defaultDatetime="toPickerDatetime"
-          type="to"
-          @date-change="handleToDateChange"
-        />
-        <button type="submit" class="mls-btn mls-btn--sky mls-np-submit-btn"
-          @click="isCycleTimeSelected ? handleCycleTimeSubmit() : handleQuerySubmit()">
-          SUBMIT
-        </button>
-        <button v-if="!isCycleTimeSelected" type="button"
-          class="mls-btn mls-btn--ghost mls-np-submit-btn"
-          @click="handleQuerySubmitActivity()">VIEW ACTIVITY</button>
-      </div>
+        <BlurryHorizontalDivider />
 
-      <!-- Cycle Time Bar Chart -->
-      <div v-if="isCycleTimeSelected" class="mls-np-chart-card">
-        <div class="mls-np-chart-head">
-          <span class="mls-np-chart-title">CYCLE TIME vs TIME</span>
-          <div v-if="isCycleTimeLoading" class="mls-loading-badge">
-            <span class="mls-loading-dot" /> Loading...
+        <!-- Cycle Time Bar Chart -->
+        <CardBox v-if="isCycleTimeSelected" class="mb-6">
+          <h3 class="text-lg font-semibold mb-4">Cycle Time vs Time</h3>
+          
+          <!-- Loading indicator -->
+          <div v-if="isCycleTimeLoading" class="flex items-center justify-center p-8">
+            <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+            <span class="ml-4 text-gray-600">Loading cycle time data...</span>
           </div>
-        </div>
-        <div v-if="cycleTimeError" class="mls-error-banner">{{ cycleTimeError }}</div>
-        <div v-if="cycleTimeData && cycleTimeData.message" class="mls-info-banner">{{ cycleTimeData.message }}</div>
-        <div v-if="cycleTimeData && cycleTimeData.cycle_time_data && cycleTimeData.cycle_time_data.length > 0" class="mls-np-chart-body">
-          <v-chart class="h-full" :option="cycleTimeChartOption" autoresize />
-        </div>
-        <div v-else-if="!isCycleTimeLoading && !cycleTimeError && !cycleTimeData?.message" class="mls-empty-chart-msg">
-          No cycle time data available for the selected time range.
-        </div>
+          
+          <!-- Error message -->
+          <div v-if="cycleTimeError" class="p-4 bg-red-100 border border-red-400 rounded mb-4">
+            <p class="font-semibold text-red-800">{{ cycleTimeError }}</p>
+          </div>
+          
+          <!-- Show message from backend if available -->
+          <div v-if="cycleTimeData && cycleTimeData.message" class="p-4 bg-blue-100 border border-blue-400 rounded mb-4">
+            <p class="font-semibold text-blue-800">{{ cycleTimeData.message }}</p>
+          </div>
+          <div v-if="cycleTimeData && cycleTimeData.cycle_time_data && cycleTimeData.cycle_time_data.length > 0" class="h-[600px]">
+            <v-chart class="h-full" :option="cycleTimeChartOption" autoresize />
+          </div>
+          <div v-else-if="!isCycleTimeLoading && !cycleTimeError && !cycleTimeData?.message" class="p-4 bg-yellow-100 border border-yellow-400 rounded">
+            <p class="font-semibold text-yellow-800">No cycle time data available for this machine in the selected time range.</p>
+            <p class="text-sm text-yellow-700">Please try a different time range or check if cycle time data is being collected for this machine.</p>
+          </div>
+        </CardBox>
+
+        <!-- Regular Chart (hidden when CYCLE_TIME is selected) -->
+        <CardBox v-if="!isCycleTimeSelected" class="mb-8">
+          <div v-if="!hasChartData" class="p-4 bg-yellow-100 border border-yellow-400 rounded">
+            <p class="font-semibold text-yellow-800">
+              {{ machineSamplingWithLimitsStore.chartFetchMessage || 'No data available for the selected time range.' }}
+            </p>
+          </div>
+          <div v-else class="min-h-[440px]">
+            <DyLineChartWithLimits
+              :data="chartData"
+              :warningLimit="warningLimit"
+              :criticalLimit="criticalLimit"
+              :step-plot="true"
+              @data-hovered="OnHoverCallBack"
+            />
+          </div>
+        </CardBox>      
+
+        <BlurryHorizontalDivider />
+        <GraphLegend v-if="!isCycleTimeSelected" :data="hoverData"></GraphLegend>
       </div>
-
-      <!-- Regular Line Chart -->
-      <div v-if="!isCycleTimeSelected" class="mls-np-chart-card">
-        <div class="mls-np-chart-head">
-          <span class="mls-np-chart-title">{{ machineSamplingWithLimitsStore.parameterGroup }} — {{ machineSamplingWithLimitsStore.actualParameterName }}</span>
-        </div>
-        <div v-if="!hasChartData" class="mls-empty-chart-msg">
-          {{ machineSamplingWithLimitsStore.chartFetchMessage || 'No data available for the selected time range.' }}
-        </div>
-        <div v-else class="mls-np-chart-body">
-          <DyLineChartWithLimits
-            :data="chartData"
-            :warningLimit="warningLimit"
-            :criticalLimit="criticalLimit"
-            :step-plot="true"
-            @data-hovered="OnHoverCallBack"
-          />
-        </div>
-      </div>
-
-      <GraphLegend v-if="!isCycleTimeSelected" :data="hoverData" />
-
     </SectionMain>
   </LayoutAuthenticatedSimple>
 </template>
 
 <style scoped>
-/* ── Section root ── */
-.mls-section-main {
-  padding: 0 !important;
-  background: #080d16;
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  font-family: 'Barlow Condensed', 'JetBrains Mono', monospace;
+/* Tailwind CSS classes for animation */
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
-/* ── Alert Toast ── */
-.mls-alert {
-  position: fixed;
-  top: 12px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 100;
-  padding: 6px 18px;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #fff;
-  border: 1px solid transparent;
+/* Add your alert styles here */
+.alert {
+  @apply fixed top-10 left-1/2 transform -translate-x-1/2 text-white p-2 rounded-md border z-50;
+  animation: slideIn 0.5s ease-out;
 }
-.mls-alert--ok   { background: #166534; border-color: #22c55e; }
-.mls-alert--error { background: #7f1d1d; border-color: #ef4444; }
-
-/* ── Buttons ── */
-.mls-btn {
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 5px 12px;
-  border: 1px solid transparent;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: opacity 0.15s;
-}
-.mls-btn:disabled { opacity: 0.35; cursor: not-allowed; }
-.mls-btn--sky {
-  background: #0284c7;
-  border-color: #0284c7;
-  color: #fff;
-}
-.mls-btn--sky:not(:disabled):hover { background: #0369a1; }
-.mls-btn--ghost {
-  background: transparent;
-  border-color: #334155;
-  color: #94a3b8;
-}
-.mls-btn--ghost:not(:disabled):hover { border-color: #475569; color: #cbd5e1; }
-
-/* ════════════════════════════════════════
-   NON-PRESSURE VIEW
-════════════════════════════════════════ */
-.mls-nonpressure-header {
-  display: flex;
-  align-items: stretch;
-  gap: 0;
-  border-bottom: 1px solid #1e293b;
-  background: #0d1117;
-  flex-shrink: 0;
-}
-
-.mls-back-btn {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 14px;
-  background: transparent;
-  border: none;
-  border-right: 1px solid #1e293b;
-  color: #64748b;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  cursor: pointer;
-  flex-shrink: 0;
-  transition: color 0.15s;
-  font-family: 'Barlow Condensed', monospace;
-}
-.mls-back-btn:hover { color: #38bdf8; }
-.mls-back-icon { width: 14px; height: 14px; }
-
-.mls-np-kpi-bar {
-  display: flex;
-  align-items: stretch;
-  flex: 1;
-  overflow-x: auto;
-}
-
-.mls-np-kpi-item {
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 8px 14px;
-  border-right: 1px solid #1e293b;
-  min-width: 110px;
-  position: relative;
-}
-.mls-np-kpi-item::before {
-  content: '';
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  height: 2px;
-  background: #334155;
-}
-.mls-np-kpi--machine::before { background: #38bdf8; }
-.mls-np-kpi--param::before   { background: #10b981; }
-.mls-np-kpi--warn::before    { background: #f59e0b; }
-.mls-np-kpi--crit::before    { background: #ef4444; }
-.mls-np-kpi--ok::before      { background: #22c55e; }
-
-.mls-np-kpi-tag {
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.14em;
-  text-transform: uppercase;
-  color: #475569;
-  margin-bottom: 3px;
-}
-
-.mls-np-kpi-val {
-  font-size: 13px;
-  font-weight: 700;
-  color: #e2e8f0;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  font-family: 'JetBrains Mono', monospace;
-}
-.mls-np-kpi--crit .mls-np-kpi-val { color: #f87171; }
-.mls-np-kpi--warn .mls-np-kpi-val { color: #fbbf24; }
-.mls-np-kpi--ok .mls-np-kpi-val   { color: #4ade80; }
-
-/* Limit edit row */
-.mls-limit-edit-row {
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-}
-
-.mls-limit-input {
-  width: 72px;
-  background: #0a0f16;
-  border: 1px solid #334155;
-  color: #e2e8f0;
-  font-size: 12px;
-  font-weight: 700;
-  padding: 3px 6px;
-  font-family: 'JetBrains Mono', monospace;
-  outline: none;
-}
-.mls-limit-input:focus { border-color: #38bdf8; }
-
-.mls-limit-update-btn {
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  padding: 3px 8px;
-  background: #0369a1;
-  border: none;
-  color: #fff;
-  cursor: pointer;
-}
-.mls-limit-update-btn:hover { background: #0284c7; }
-
-/* Time picker row */
-.mls-np-time-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 6px 12px;
-  border-bottom: 1px solid #1e293b;
-  background: #0a0f16;
-  flex-shrink: 0;
-}
-
-.mls-np-time-label {
-  font-size: 9px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #475569;
-  flex-shrink: 0;
-}
-
-.mls-np-time-sep {
-  width: 1px;
-  height: 24px;
-  background: #1e293b;
-  flex-shrink: 0;
-  margin: 0 4px;
-}
-
-.mls-np-submit-btn {
-  margin-left: 8px;
-}
-
-/* Chart card */
-.mls-np-chart-card {
-  display: flex;
-  flex-direction: column;
-  flex: 1;
-  min-height: 0;
-  border-top: 1px solid #1e293b;
-  background: #0d1117;
-}
-
-.mls-np-chart-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 14px;
-  border-bottom: 1px solid #1e293b;
-  background: #0a0f16;
-  flex-shrink: 0;
-}
-
-.mls-np-chart-title {
-  font-size: 12px;
-  font-weight: 900;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #94a3b8;
-  font-family: 'Barlow Condensed', monospace;
-}
-
-.mls-np-chart-body {
-  flex: 1;
-  min-height: 500px;
-  padding: 0;
-}
-
-.mls-empty-chart-msg {
-  padding: 24px 16px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #334155;
-  text-align: center;
-}
-
-.mls-error-banner {
-  padding: 8px 14px;
-  background: rgba(239, 68, 68, 0.1);
-  border-bottom: 1px solid rgba(239, 68, 68, 0.3);
-  font-size: 11px;
-  font-weight: 700;
-  color: #f87171;
-  letter-spacing: 0.04em;
-}
-
-.mls-info-banner {
-  padding: 8px 14px;
-  background: rgba(56, 189, 248, 0.08);
-  border-bottom: 1px solid rgba(56, 189, 248, 0.2);
-  font-size: 11px;
-  font-weight: 700;
-  color: #38bdf8;
-  letter-spacing: 0.04em;
-}
-
-.mls-loading-badge {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 10px;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #475569;
-}
-
-.mls-loading-dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #38bdf8;
-  animation: mls-pulse 1.5s ease-in-out infinite;
-  flex-shrink: 0;
-}
-
-@keyframes mls-pulse {
-  0%, 100% { opacity: 1; }
-  50%       { opacity: 0.3; }
-}
-
-/* Scrollbar */
-::-webkit-scrollbar { width: 4px; height: 4px; }
-::-webkit-scrollbar-track { background: #0d1117; }
-::-webkit-scrollbar-thumb { background: #1e293b; }
-::-webkit-scrollbar-thumb:hover { background: #334155; }
 </style>

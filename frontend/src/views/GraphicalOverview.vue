@@ -222,16 +222,29 @@ function logParameterDetails(param, machineName, parameterGroup) {
   console.log(`Machine Name:`, machineName);
   console.log(`Parameter Group:`, parameterGroup);
 
+  const isPressure = (
+    param?.is_pressure_machine === true
+    || param?.actual_parameter_name === 'AIR_PRESSURE'
+    || param?.parameter_group === 'AIR_PRESSURE'
+    || parameterGroup === 'AIR_PRESSURE'
+  );
+
   const details = {
     machine: machineName,
-    actualParameterName: param.actual_parameter_name,
-    parameterGroup: parameterGroup
+    actualParameterName: isPressure ? 'AIR_PRESSURE' : param.actual_parameter_name,
+    parameterGroup: isPressure ? 'AIR_PRESSURE' : parameterGroup,
+    isPressureMachine: isPressure,
+    is_pressure_machine: isPressure,
   };
 
   machineSamplingWithLimitsStore.setMachineDetails(details);
   machineSamplingWithLimitsStore.setLastSelectedParameter(details);
   navigationHistoryStore.addToHistory(router.currentRoute.value);
-  router.push('/machine-level-sampling');
+  if (isPressure) {
+    router.push('/air-pressure-sampling');
+  } else {
+    router.push('/machine-level-sampling');
+  }
 }
 
 

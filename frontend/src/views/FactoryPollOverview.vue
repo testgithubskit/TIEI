@@ -321,6 +321,7 @@ const handleMachineParameterClick = async (clickedParameter) => {
     machineSamplingWithLimitsStore.parameterGroup = 'CYCLE_TIME';
     machineSamplingWithLimitsStore.actualParameterName = 'CYCLE_TIME';
     machineSamplingWithLimitsStore.isPressureMachine = false;
+    router.push('/machine-level-sampling');
   } else if (isPressureClick) {
     const latest = pressureTimeToEpoch(clickedParameter.latest_update_time_ms)
       || pressureTimeToEpoch(clickedParameter.latest_update_time);
@@ -330,13 +331,13 @@ const handleMachineParameterClick = async (clickedParameter) => {
       machineSamplingWithLimitsStore.refreshPressureTimestamp(60);
     }
     await machineSamplingWithLimitsStore.fetchPressureMachineData();
+    router.push('/air-pressure-sampling');
   } else {
     machineSamplingWithLimitsStore.isPressureMachine = false;
     machineSamplingWithLimitsStore.refreshTimestamp();
     await machineSamplingWithLimitsStore.fetchMachineParameterData();
+    router.push('/machine-level-sampling');
   }
-
-  router.push('/machine-level-sampling');
 };
 
 const fetchCycleTimeData = async () => {
