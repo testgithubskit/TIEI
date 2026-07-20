@@ -338,8 +338,8 @@ async function handlePressureLogSelection(logFileId, checked) {
     }
     if (currentIds.length >= 3) {
       Toastify({
-        text: 'You can select a maximum of 3 timestamps.',
-        duration: 4000,
+        text: 'Maximum of 3 runs can be selected for preview.',
+        duration: 3500,
         close: true,
         gravity: 'top',
         position: 'right',
@@ -359,6 +359,17 @@ async function handlePressureLogSelection(logFileId, checked) {
 
 function handleRowClick(logFileId) {
   const isSelected = selectedPressureLogFileIds.value.includes(logFileId);
+  if (!isSelected && selectedPressureLogFileIds.value.length >= 3) {
+    Toastify({
+      text: 'Maximum of 3 runs can be selected for preview.',
+      duration: 3500,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: '#ef4444',
+    }).showToast();
+    return;
+  }
   handlePressureLogSelection(logFileId, !isSelected);
 }
 
@@ -500,6 +511,160 @@ function OnHoverCallBack(hoverData){
   };
 }
 
+// Collapsible filter panel state
+const isFilterCollapsed = ref(false);
+
+// RMSE Warning & Critical Limits (configurable in left panel)
+const rmseWarningLimit = ref(50.0);
+const rmseCriticalLimit = ref(100.0);
+
+function getRmseAlertStatus(item) {
+  if (!item || !item.active || item.isBaseline || item.rmse == null || isNaN(Number(item.rmse))) {
+    return 'normal';
+  }
+  const val = Number(item.rmse);
+  const crit = Number(rmseCriticalLimit.value);
+  const warn = Number(rmseWarningLimit.value);
+
+  if (Number.isFinite(crit) && crit > 0 && val >= crit) {
+    return 'critical';
+  }
+  if (Number.isFinite(warn) && warn > 0 && val >= warn) {
+    return 'warning';
+  }
+  return 'normal';
+}
+
+// Expand/collapse row metrics details in timestamps list table
+const expandedRowId = ref(null);
+
+function toggleRowExpand(id) {
+  if (expandedRowId.value === id) {
+    expandedRowId.value = null;
+  } else {
+    expandedRowId.value = id;
+  }
+}
+
+function formatOneDecimal(val) {
+  if (val == null || val === undefined || isNaN(Number(val))) return '—';
+  return Number(val).toFixed(1);
+}
+
+function calculateRmseForRun(runLogFileId) {
+  if (!runLogFileId) return null;
+  const seriesList = machineSamplingWithLimitsStore.pressureComparisonSeries || [];
+  if (!seriesList.length) return null;
+
+  // Find baseline series and run series
+  const baseSeries = seriesList.find((s) => s.is_baseline || s.log_file_id === baselineLogFileId.value);
+  const runSeries = seriesList.find((s) => s.log_file_id === runLogFileId && !s.is_baseline);
+
+  if (!baseSeries?.chart_data?.length || !runSeries?.chart_data?.length) {
+    return null;
+  }
+
+  const basePoints = baseSeries.chart_data;
+  const runPoints = runSeries.chart_data;
+  const n = Math.min(basePoints.length, runPoints.length);
+  if (n === 0) return null;
+
+  let sumSqErr = 0;
+  let validCount = 0;
+  for (let i = 0; i < n; i++) {
+    const yBase = basePoints[i][1];
+    const yRun = runPoints[i][1];
+    if (yBase != null && yRun != null && Number.isFinite(Number(yBase)) && Number.isFinite(Number(yRun))) {
+      const diff = Number(yRun) - Number(yBase);
+      sumSqErr += diff * diff;
+      validCount++;
+    }
+  }
+
+  if (validCount === 0) return null;
+  const rmse = Math.sqrt(sumSqErr / validCount);
+  return formatOneDecimal(rmse);
+}
+
+// 4 Fixed KPI Slots (Baseline + Run 1 + Run 2 + Run 3) with greyed-out inactive state
+const fourKpiSlots = computed(() => {
+  const slots = [];
+
+  // Slot 0: Baseline
+  const bId = baselineLogFileId.value;
+  const bRow = (bId != null && isBaselineVisible.value)
+    ? pressureLogFiles.value.find((r) => r.log_file_id === bId)
+    : null;
+
+  if (bRow) {
+    slots.push({
+      key: 'baseline',
+      active: true,
+      isBaseline: true,
+      badgeText: 'BASELINE RUN',
+      timestamp: [formatProcessedDateOnly(bRow.time_stamp), formatProcessedTimeOnly(bRow.time_stamp)].filter(Boolean).join(' '),
+      duration: bRow.cycle_duration_seconds != null ? formatOneDecimal(bRow.cycle_duration_seconds) : null,
+      mean: bRow.mean_pressure != null ? formatOneDecimal(bRow.mean_pressure) : null,
+      peak: bRow.peak_pressure != null ? formatOneDecimal(bRow.peak_pressure) : null,
+      ripple: bRow.pressure_ripple != null ? formatOneDecimal(bRow.pressure_ripple) : null,
+      rmse: null, // RMSE not shown for baseline
+      color: 'rgb(185, 28, 28)', // Red
+    });
+  } else {
+    slots.push({
+      key: 'baseline',
+      active: false,
+      isBaseline: true,
+      badgeText: 'BASELINE (OFF)',
+      timestamp: 'No Active Baseline',
+      duration: null,
+      color: '#cbd5e1',
+    });
+  }
+
+  // Slots 1, 2, 3: Up to 3 selected runs
+  const nonBaselineColors = [
+    'rgb(37, 99, 235)',   // Blue #2563eb (Run 1)
+    'rgb(147, 51, 234)',  // Purple #9333ea (Run 2)
+    'rgb(219, 39, 119)'   // Pink #db2777 (Run 3)
+  ];
+
+  for (let i = 0; i < 3; i++) {
+    const selectedId = selectedPressureLogFileIds.value[i];
+    const sRow = selectedId != null ? pressureLogFiles.value.find((r) => r.log_file_id === selectedId) : null;
+    const color = nonBaselineColors[i];
+
+    if (sRow) {
+      const computedRmse = calculateRmseForRun(sRow.log_file_id);
+      slots.push({
+        key: `run_${i + 1}`,
+        active: true,
+        isBaseline: false,
+        badgeText: `RUN #${i + 1}`,
+        timestamp: [formatProcessedDateOnly(sRow.time_stamp), formatProcessedTimeOnly(sRow.time_stamp)].filter(Boolean).join(' '),
+        duration: sRow.cycle_duration_seconds != null ? formatOneDecimal(sRow.cycle_duration_seconds) : null,
+        mean: sRow.mean_pressure != null ? formatOneDecimal(sRow.mean_pressure) : null,
+        peak: sRow.peak_pressure != null ? formatOneDecimal(sRow.peak_pressure) : null,
+        ripple: sRow.pressure_ripple != null ? formatOneDecimal(sRow.pressure_ripple) : null,
+        rmse: computedRmse,
+        color: color,
+      });
+    } else {
+      slots.push({
+        key: `run_${i + 1}`,
+        active: false,
+        isBaseline: false,
+        badgeText: `RUN #${i + 1} (EMPTY)`,
+        timestamp: 'Select timestamp',
+        duration: null,
+        color: '#cbd5e1',
+      });
+    }
+  }
+
+  return slots;
+});
+
 const handleBack = () => {
   const previous = navigationHistoryStore.history.length
     ? navigationHistoryStore.history[navigationHistoryStore.history.length - 1]
@@ -565,10 +730,14 @@ onMounted(async () => {
           BACK
         </button>
 
-        <!-- Machine Card -->
-        <div class="mls-top-card">
-          <span class="mls-top-card-label">MACHINE</span>
-          <span class="mls-top-card-value">{{ machineSamplingWithLimitsStore.machine }}</span>
+        <!-- Location & Machine Card -->
+        <div class="mls-top-card mls-top-card--location">
+          <span class="mls-top-card-label">LOCATION & MACHINE</span>
+          <div class="mls-breadcrumb-chips">
+            <span class="mls-chip-line">LINE: BLOCK</span>
+            <span class="mls-chip-sep">&rsaquo;</span>
+            <span class="mls-chip-machine">MACHINE: {{ machineSamplingWithLimitsStore.machine }}</span>
+          </div>
         </div>
 
         <!-- Parameter Card -->
@@ -596,110 +765,148 @@ onMounted(async () => {
         <!-- ── SIDE PANEL (380px) ── -->
         <div class="mls-side-panel">
 
-          <!-- 1. BASELINE CONTROL CARD (Distinct Styled Card) -->
-          <div class="mls-baseline-card">
-            <div class="mls-baseline-card-header">
-              <div class="mls-baseline-title-group">
-                <span class="mls-baseline-card-badge">BASELINE</span>
-                <span class="mls-baseline-val" :class="{ 'mls-baseline-val--none': !hasBaseline }">
-                  {{ baselineLogFileLabel }}
-                </span>
+          <!-- ── UNIFIED SIDE PANEL CONTROLS ── -->
+          <div class="mls-side-controls">
+
+            <!-- 1. BASELINE CONTROL CARD -->
+            <div class="mls-control-card">
+              <!-- Top Row: Badge + Timestamp + Eye Toggle -->
+              <div class="mls-card-top-row">
+                <div class="mls-baseline-badge-group">
+                  <span class="mls-card-badge mls-card-badge--red">BASELINE</span>
+                  <span class="mls-card-ts-val" :class="{ 'mls-card-ts-val--none': !hasBaseline }">
+                    {{ baselineLogFileLabel }}
+                  </span>
+                </div>
+                <button
+                  v-if="hasBaseline"
+                  type="button"
+                  class="mls-eye-btn"
+                  :class="{ 'mls-eye-btn--off': !isBaselineVisible }"
+                  :title="isBaselineVisible ? 'Hide Baseline from Graph' : 'Show Baseline on Graph'"
+                  @click="isBaselineVisible = !isBaselineVisible"
+                >
+                  <svg v-if="isBaselineVisible" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                  </svg>
+                  <svg v-else xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
+                  </svg>
+                </button>
               </div>
-              <button
-                v-if="hasBaseline"
-                type="button"
-                class="mls-eye-toggle-btn"
-                :class="{ 'mls-eye-toggle-btn--hidden': !isBaselineVisible }"
-                :title="isBaselineVisible ? 'Hide Baseline from Graph' : 'Show Baseline on Graph'"
-                @click="isBaselineVisible = !isBaselineVisible"
-              >
-                <svg v-if="isBaselineVisible" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.012 1.012 0 010-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178z" />
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                </svg>
-                <svg v-else xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-4 h-4">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M3.98 8.223A10.477 10.477 0 001.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.45 10.45 0 0112 4.5c4.756 0 8.773 3.162 10.065 7.498a10.523 10.523 0 01-4.293 5.774M6.228 6.228L3 3m3.228 3.228l3.65 3.65m7.894 7.894L21 21m-3.228-3.228l-3.65-3.65m0 0a3 3 0 10-4.243-4.243m4.242 4.242L9.88 9.88" />
-                </svg>
-              </button>
+
+              <!-- Bottom Row: Action Buttons -->
+              <div class="mls-card-actions-row">
+                <button
+                  type="button"
+                  class="mls-ctrl-btn mls-ctrl-btn--primary"
+                  :disabled="!canUpdateBaseline || isUpdatingPressureBaseline"
+                  title="Select 1 timestamp in the table below to update the baseline"
+                  @click="handlePressureBaselineUpdate"
+                >
+                  Set Selected as Baseline
+                </button>
+                <button
+                  type="button"
+                  class="mls-ctrl-btn mls-ctrl-btn--ghost"
+                  :disabled="!hasBaseline || isUpdatingPressureBaseline"
+                  @click="handlePressureBaselineClear"
+                >
+                  Clear
+                </button>
+              </div>
             </div>
 
-            <div class="mls-baseline-actions">
-              <button
-                type="button"
-                class="mls-btn-action mls-btn-action--primary"
-                :disabled="!canUpdateBaseline || isUpdatingPressureBaseline"
-                title="Select 1 timestamp in the table below to update the baseline"
-                @click="handlePressureBaselineUpdate"
-              >
-                Update Baseline
-              </button>
-              <button
-                type="button"
-                class="mls-btn-action mls-btn-action--ghost"
-                :disabled="!hasBaseline || isUpdatingPressureBaseline"
-                @click="handlePressureBaselineClear"
-              >
-                Clear
-              </button>
+            <!-- 2. RMSE ALERT LIMITS CARD -->
+            <div class="mls-control-card">
+              <div class="mls-card-title-bar">
+                <span class="mls-card-title-text">RMSE ALERT LIMITS (Pa)</span>
+              </div>
+              <div class="mls-rmse-two-col">
+                <div class="mls-rmse-box">
+                  <span class="mls-rmse-box-label text-amber-600">WARNING LIMIT</span>
+                  <input
+                    v-model.number="rmseWarningLimit"
+                    type="number"
+                    step="1"
+                    min="0"
+                    class="mls-rmse-box-input mls-rmse-box-input--warn"
+                    placeholder="50"
+                  />
+                </div>
+                <div class="mls-rmse-box">
+                  <span class="mls-rmse-box-label text-red-600">CRITICAL LIMIT</span>
+                  <input
+                    v-model.number="rmseCriticalLimit"
+                    type="number"
+                    step="1"
+                    min="0"
+                    class="mls-rmse-box-input mls-rmse-box-input--crit"
+                    placeholder="100"
+                  />
+                </div>
+              </div>
             </div>
-          </div>
 
-          <!-- 2. FILTER TIMESTAMPS CARD -->
-          <div class="mls-search-card">
-            <div class="mls-search-title">FILTER TIMESTAMPS</div>
-            <div class="mls-date-grid">
-              <div class="mls-date-field">
-                <span class="mls-date-prefix">FROM</span>
-                <span class="mls-field-divider" />
-                <flat-pickr
-                  v-model="pressureDateRange.startDate"
-                  :config="pressureFromDateConfig"
-                  class="mls-date-input"
-                  placeholder="dd-mm-yyyy"
-                />
-                <button v-if="pressureDateRange.startDate" type="button" class="mls-date-clear" @click="pressureDateRange.startDate = ''">×</button>
+            <!-- 3. FILTER TIMESTAMPS CARD (Collapsible) -->
+            <div class="mls-control-card">
+              <div class="mls-card-title-bar mls-card-title-bar--clickable" @click="isFilterCollapsed = !isFilterCollapsed">
+                <div class="mls-card-title-left">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3.5 h-3.5 text-slate-500 mr-1.5">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 20.35a1 1 0 001.3 1.3l2.74-6.38A8.96 8.96 0 0012 21c4.97 0 9-4.03 9-9s-4.03-9-9-9z" />
+                  </svg>
+                  <span class="mls-card-title-text">FILTER TIMESTAMPS</span>
+                </div>
+                <button type="button" class="mls-toggle-btn" title="Toggle Filter Panel">
+                  <span>{{ isFilterCollapsed ? 'Expand' : 'Collapse' }}</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 ml-1 transition-transform" :class="{ 'rotate-180': isFilterCollapsed }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
               </div>
-              <div class="mls-date-field">
-                <span class="mls-date-prefix">TO</span>
-                <span class="mls-field-divider" />
-                <flat-pickr
-                  v-model="pressureDateRange.endDate"
-                  :config="pressureToDateConfig"
-                  class="mls-date-input"
-                  placeholder="dd-mm-yyyy"
-                />
-                <button v-if="pressureDateRange.endDate" type="button" class="mls-date-clear" @click="pressureDateRange.endDate = ''">×</button>
+
+              <div v-show="!isFilterCollapsed" class="mls-card-body-content">
+                <div class="mls-date-grid">
+                  <div class="mls-date-field">
+                    <span class="mls-date-prefix">FROM</span>
+                    <span class="mls-field-divider" />
+                    <flat-pickr
+                      v-model="pressureDateRange.startDate"
+                      :config="pressureFromDateConfig"
+                      class="mls-date-input"
+                      placeholder="dd-mm-yyyy"
+                    />
+                    <button v-if="pressureDateRange.startDate" type="button" class="mls-date-clear" @click="pressureDateRange.startDate = ''">×</button>
+                  </div>
+                  <div class="mls-date-field">
+                    <span class="mls-date-prefix">TO</span>
+                    <span class="mls-field-divider" />
+                    <flat-pickr
+                      v-model="pressureDateRange.endDate"
+                      :config="pressureToDateConfig"
+                      class="mls-date-input"
+                      placeholder="dd-mm-yyyy"
+                    />
+                    <button v-if="pressureDateRange.endDate" type="button" class="mls-date-clear" @click="pressureDateRange.endDate = ''">×</button>
+                  </div>
+                </div>
+                <div class="mls-search-btn-row">
+                  <button type="button" class="mls-btn-filter" @click="loadPressureLogFiles()">Filter</button>
+                  <button type="button" class="mls-btn-reset" @click="resetPressureFilter()">Reset</button>
+                </div>
               </div>
             </div>
-            <div class="mls-search-btn-row">
-              <button type="button" class="mls-btn-filter" @click="loadPressureLogFiles()">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3 mr-1 inline">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M12 3c-4.97 0-9 4.03-9 9 0 2.12.74 4.07 1.97 5.61L4.35 20.35a1 1 0 001.3 1.3l2.74-6.38A8.96 8.96 0 0012 21c4.97 0 9-4.03 9-9s-4.03-9-9-9z" />
-                </svg>
-                Filter
-              </button>
-              <button type="button" class="mls-btn-reset" @click="resetPressureFilter()">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor" class="w-3 h-3 mr-1 inline">
-                  <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
-                </svg>
-                Reset Filter
-              </button>
-            </div>
+
           </div>
 
           <!-- 3. TIMESTAMPS CONTROL BAR -->
           <div class="mls-table-control-bar">
-            <span class="mls-table-control-title">TIMESTAMPS LIST</span>
+            <span class="mls-table-control-title">
+              TIMESTAMPS LIST
+              <span class="mls-select-count-badge">({{ selectedPressureLogFileIds.length }}/3)</span>
+            </span>
             <div class="mls-table-control-actions">
-              <button
-                type="button"
-                class="mls-link-action"
-                :disabled="displayPressureLogFiles.length === 0"
-                @click="selectAllPressureSelections"
-              >
-                Select All
-              </button>
-              <span class="mls-link-divider">|</span>
               <button
                 type="button"
                 class="mls-link-action"
@@ -752,8 +959,8 @@ onMounted(async () => {
                 <span v-else class="mls-sort-idle">↕</span>
               </span>
             </div>
-            <div class="mls-th mls-th-dev">
-              <span>DEV</span>
+            <div class="mls-th mls-th-metrics">
+              <span>MEAN (Pa)</span>
             </div>
           </div>
 
@@ -761,28 +968,63 @@ onMounted(async () => {
           <div class="mls-table-body">
             <div v-if="isPressureLogListLoading" class="mls-empty-state">Loading timestamps...</div>
             <div v-else-if="displayPressureLogFiles.length === 0" class="mls-empty-state">No timestamps found for range.</div>
-            <div
-              v-for="row in displayPressureLogFiles"
-              v-else
-              :key="row.log_file_id"
-              class="mls-tr"
-              :class="{
-                'mls-tr--selected': selectedPressureLogFileIds.includes(row.log_file_id)
-              }"
-              @click="handleRowClick(row.log_file_id)"
-            >
-              <div class="mls-td mls-td-chk" @click.stop>
-                <input
-                  :checked="selectedPressureLogFileIds.includes(row.log_file_id)"
-                  type="checkbox"
-                  class="mls-checkbox"
-                  @change="handlePressureLogSelection(row.log_file_id, $event.target.checked)"
-                />
+            <template v-else v-for="row in displayPressureLogFiles" :key="row.log_file_id">
+              <div
+                class="mls-tr"
+                :class="{
+                  'mls-tr--selected': selectedPressureLogFileIds.includes(row.log_file_id),
+                  'mls-tr--expanded': expandedRowId === row.log_file_id
+                }"
+                @click="handleRowClick(row.log_file_id)"
+              >
+                <div class="mls-td mls-td-chk" @click.stop>
+                  <input
+                    :checked="selectedPressureLogFileIds.includes(row.log_file_id)"
+                    :disabled="!selectedPressureLogFileIds.includes(row.log_file_id) && selectedPressureLogFileIds.length >= 3"
+                    type="checkbox"
+                    class="mls-checkbox"
+                    @change="handlePressureLogSelection(row.log_file_id, $event.target.checked)"
+                  />
+                </div>
+                <div class="mls-td mls-td-date">{{ formatProcessedDateOnly(row.time_stamp || row.processed_time) }}</div>
+                <div class="mls-td mls-td-time">{{ formatProcessedTimeOnly(row.time_stamp || row.processed_time) }}</div>
+                <div class="mls-td mls-td-metrics" @click.stop="toggleRowExpand(row.log_file_id)" title="Click to view detailed metrics">
+                  <span class="mls-metrics-val">{{ row.mean_pressure != null ? formatOneDecimal(row.mean_pressure) + ' Pa' : '—' }}</span>
+                  <button type="button" class="mls-row-expand-btn" :class="{ 'mls-row-expand-btn--open': expandedRowId === row.log_file_id }" title="View Run Metrics">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform" :class="{ 'rotate-180': expandedRowId === row.log_file_id }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 9l-7 7-7-7" />
+                    </svg>
+                  </button>
+                </div>
               </div>
-              <div class="mls-td mls-td-date">{{ formatProcessedDateOnly(row.time_stamp || row.processed_time) }}</div>
-              <div class="mls-td mls-td-time">{{ formatProcessedTimeOnly(row.time_stamp || row.processed_time) }}</div>
-              <div class="mls-td mls-td-dev">{{ row.dev || '-' }}</div>
-            </div>
+
+              <!-- Collapsible Row Metrics Drawer -->
+              <div v-if="expandedRowId === row.log_file_id" class="mls-row-drawer" @click.stop>
+                <div class="mls-drawer-grid">
+                  <div class="mls-drawer-stat">
+                    <span class="mls-drawer-label">Mean Pressure</span>
+                    <span class="mls-drawer-val">{{ row.mean_pressure != null ? formatOneDecimal(row.mean_pressure) + ' Pa' : 'N/A' }}</span>
+                  </div>
+                  <div class="mls-drawer-stat">
+                    <span class="mls-drawer-label">Peak Pressure</span>
+                    <span class="mls-drawer-val text-amber-600">{{ row.peak_pressure != null ? formatOneDecimal(row.peak_pressure) + ' Pa' : 'N/A' }}</span>
+                  </div>
+                  <div class="mls-drawer-stat">
+                    <span class="mls-drawer-label">Cycle Duration</span>
+                    <span class="mls-drawer-val text-blue-600">{{ row.cycle_duration_seconds != null ? formatOneDecimal(row.cycle_duration_seconds) + ' s' : 'N/A' }}</span>
+                  </div>
+                  <div class="mls-drawer-stat">
+                    <span class="mls-drawer-label">Pressure Ripple (StdDev)</span>
+                    <span class="mls-drawer-val text-purple-600">{{ row.pressure_ripple != null ? formatOneDecimal(row.pressure_ripple) + ' Pa' : 'N/A' }}</span>
+                  </div>
+                </div>
+                <div class="mls-drawer-footer" v-if="row.start_time || row.end_time">
+                  <span class="mls-drawer-time-range">
+                    Run Window: <strong>{{ row.start_time || '—' }}</strong> &rarr; <strong>{{ row.end_time || '—' }}</strong>
+                  </span>
+                </div>
+              </div>
+            </template>
           </div>
         </div>
 
@@ -795,12 +1037,79 @@ onMounted(async () => {
               <h3 class="mls-graph-title">AIR PRESSURE COMPARISON</h3>
               <span class="mls-head-divider">|</span>
               <div class="mls-head-meta">
-                <span class="mls-head-meta-item"><span class="mls-head-meta-label">MACHINE:</span> {{ machineSamplingWithLimitsStore.machine }}</span>
+                <div class="mls-breadcrumb-chips">
+                  <span class="mls-chip-line">LINE: BLOCK</span>
+                  <span class="mls-chip-sep">&rsaquo;</span>
+                  <span class="mls-chip-machine">MACHINE: {{ machineSamplingWithLimitsStore.machine }}</span>
+                </div>
               </div>
             </div>
 
             <!-- Graph Controls & Toggles -->
             <div class="mls-graph-head-right">
+            </div>
+          </div>
+
+          <!-- ── 4 FIXED KPI SLOTS BANNER ── -->
+          <div class="mls-metrics-summary-bar">
+            <div
+              v-for="item in fourKpiSlots"
+              :key="item.key"
+              class="mls-metric-card"
+              :class="{
+                'mls-metric-card--inactive': !item.active,
+                'mls-metric-card--rmse-warn': getRmseAlertStatus(item) === 'warning',
+                'mls-metric-card--rmse-crit': getRmseAlertStatus(item) === 'critical',
+              }"
+              :style="item.active ? {
+                borderLeftColor: getRmseAlertStatus(item) === 'critical' ? '#dc2626' : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color)
+              } : {}"
+            >
+              <!-- Card Header: Title + Duration + Timestamp -->
+              <div class="mls-metric-card-header">
+                <div class="mls-metric-title-group">
+                  <span
+                    class="mls-metric-indicator"
+                    :style="{ background: getRmseAlertStatus(item) === 'critical' ? '#dc2626' : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color) }"
+                  />
+                  <span class="mls-metric-badge-text">{{ item.badgeText }}</span>
+                  <span v-if="item.active && item.duration != null" class="mls-metric-duration-chip">
+                    {{ item.duration }}s
+                  </span>
+                </div>
+                <span class="mls-metric-ts">{{ item.timestamp }}</span>
+              </div>
+
+              <!-- Metrics Stats Row (4 Columns: MEAN | PEAK | RIPPLE | RMSE) -->
+              <div class="mls-metric-card-grid">
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">MEAN</span>
+                  <span class="mls-metric-val">{{ item.active && item.mean != null ? item.mean + ' Pa' : '—' }}</span>
+                </div>
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">PEAK</span>
+                  <span class="mls-metric-val">{{ item.active && item.peak != null ? item.peak + ' Pa' : '—' }}</span>
+                </div>
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">RIPPLE (STD)</span>
+                  <span class="mls-metric-val">{{ item.active && item.ripple != null ? item.ripple + ' Pa' : '—' }}</span>
+                </div>
+                <div class="mls-metric-stat" :class="{ 'mls-stat--rmse-alert': getRmseAlertStatus(item) !== 'normal' }">
+                  <span class="mls-metric-label" :class="{
+                    'text-red-700 font-extrabold': getRmseAlertStatus(item) === 'critical',
+                    'text-amber-700 font-extrabold': getRmseAlertStatus(item) === 'warning',
+                  }">RMSE</span>
+                  <span class="mls-metric-val" :class="{
+                    'mls-rmse-val--crit': getRmseAlertStatus(item) === 'critical',
+                    'mls-rmse-val--warn': getRmseAlertStatus(item) === 'warning',
+                    'text-emerald-600': item.active && !item.isBaseline && item.rmse != null && getRmseAlertStatus(item) === 'normal',
+                  }">
+                    {{ item.active && !item.isBaseline && item.rmse != null ? item.rmse + ' Pa' : '—' }}
+                    <span v-if="getRmseAlertStatus(item) === 'critical'" class="mls-alert-pill mls-alert-pill--crit">CRIT</span>
+                    <span v-else-if="getRmseAlertStatus(item) === 'warning'" class="mls-alert-pill mls-alert-pill--warn">WARN</span>
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -840,6 +1149,27 @@ onMounted(async () => {
 
 <style scoped>
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap');
+
+/* ── Custom Light Scrollbar Theme ── */
+:deep(*::-webkit-scrollbar) {
+  width: 6px !important;
+  height: 6px !important;
+}
+:deep(*::-webkit-scrollbar-track) {
+  background: #f1f5f9 !important;
+}
+:deep(*::-webkit-scrollbar-thumb) {
+  background: #94a3b8 !important;
+  border-radius: 3px !important;
+}
+:deep(*::-webkit-scrollbar-thumb:hover) {
+  background: #64748b !important;
+}
+:deep(*::-webkit-scrollbar-button) {
+  display: none !important;
+  width: 0 !important;
+  height: 0 !important;
+}
 
 /* ── Section Root: Full Height Viewport Fill ── */
 .mls-section-main {
@@ -938,6 +1268,49 @@ onMounted(async () => {
   letter-spacing: -0.01em;
   margin-top: 1px;
 }
+
+/* ── Distinctive Location & Machine Breadcrumb Chips ── */
+.mls-breadcrumb-chips {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.mls-chip-line {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: #f1f5f9;
+  color: #334155;
+  border: 1px solid #cbd5e1;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'Manrope', sans-serif;
+}
+
+.mls-chip-sep {
+  color: #0284c7;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.mls-chip-machine {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: #e0f2fe;
+  color: #0369a1;
+  border: 1px solid #7dd3fc;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'Manrope', sans-serif;
+  box-shadow: 0 1px 2px rgba(2, 132, 199, 0.08);
+}
+
 .mls-text-warn { color: #d97706 !important; }
 .mls-text-crit { color: #dc2626 !important; }
 
@@ -966,28 +1339,37 @@ onMounted(async () => {
   width: 380px;
 }
 
-/* 1. BASELINE CONTROL CARD (Distinct Bordered Card) */
-.mls-baseline-card {
-  margin: 10px 10px 6px 10px;
-  padding: 10px 12px;
-  background: #ffffff;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.04);
+/* ── UNIFIED SIDE PANEL CONTROLS ── */
+.mls-side-controls {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  padding: 10px;
+  background: #f8fafc;
+  border-bottom: 1px solid #cbd5e1;
   flex-shrink: 0;
 }
 
-.mls-baseline-card-header {
+.mls-control-card {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 6px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 1px 3px rgba(15, 23, 42, 0.03);
+}
+
+/* Card 1: Baseline Row */
+.mls-card-top-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
 }
 
-.mls-baseline-title-group {
+.mls-baseline-badge-group {
   display: flex;
   align-items: center;
   gap: 8px;
@@ -995,72 +1377,212 @@ onMounted(async () => {
   flex: 1;
 }
 
-.mls-baseline-card-badge {
+.mls-card-badge {
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  color: #b91c1c;
-  background: #fee2e2;
-  border: 1px solid #fca5a5;
-  border-radius: 2px;
   padding: 2px 6px;
+  border-radius: 3px;
   flex-shrink: 0;
+  font-family: 'Manrope', sans-serif;
 }
 
-.mls-baseline-val {
+.mls-card-badge--red {
+  background: #fee2e2;
+  color: #b91c1c;
+  border: 1px solid #fca5a5;
+}
+
+.mls-card-ts-val {
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
   font-size: 13px;
   font-weight: 700;
   color: #0f172a;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  white-space: nowrap;
-  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
-  flex: 1;
-  min-width: 0;
 }
-.mls-baseline-val--none {
+
+.mls-card-ts-val--none {
   color: #94a3b8;
   font-style: italic;
   font-weight: 500;
 }
 
-.mls-eye-toggle-btn {
+.mls-eye-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 26px;
   height: 26px;
-  border-radius: 2px;
+  border-radius: 4px;
   border: 1px solid #ef4444;
   background: #fef2f2;
   color: #b91c1c;
   cursor: pointer;
-  transition: all 0.15s ease;
-  flex-shrink: 0;
   padding: 0;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
 }
-.mls-eye-toggle-btn:hover {
-  background: #fee2e2;
-}
-.mls-eye-toggle-btn--hidden {
+
+.mls-eye-btn:hover { background: #fee2e2; }
+
+.mls-eye-btn--off {
   background: #f1f5f9;
   border-color: #cbd5e1;
   color: #94a3b8;
 }
 
-.mls-baseline-actions {
+.mls-card-actions-row {
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
+.mls-ctrl-btn {
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: 'Manrope', sans-serif;
+  transition: all 0.15s ease;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.mls-ctrl-btn--primary {
+  background: #0284c7;
+  border: 1px solid #0284c7;
+  color: #ffffff;
+  flex: 1;
+}
+
+.mls-ctrl-btn--primary:not(:disabled):hover {
+  background: #0369a1;
+  border-color: #0369a1;
+}
+
+.mls-ctrl-btn--ghost {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  color: #334155;
+}
+
+.mls-ctrl-btn--ghost:not(:disabled):hover {
+  background: #f8fafc;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+.mls-ctrl-btn:disabled {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #94a3b8 !important;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+/* Card 2: RMSE Two Column */
+.mls-card-title-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.mls-card-title-bar--clickable {
+  cursor: pointer;
+  user-select: none;
+}
+
+.mls-card-title-left {
+  display: flex;
+  align-items: center;
+}
+
+.mls-card-title-text {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  font-family: 'Manrope', sans-serif;
+}
+
+.mls-rmse-two-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.mls-rmse-box {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.mls-rmse-box-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-family: 'Manrope', sans-serif;
+}
+
+.mls-rmse-box-input {
+  width: 100%;
+  padding: 5px 8px;
+  font-size: 13px;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+  color: #0f172a;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  outline: none;
+  transition: all 0.15s ease;
+}
+
+.mls-rmse-box-input--warn:focus {
+  border-color: #d97706;
+  box-shadow: 0 0 0 2px rgba(217, 119, 6, 0.15);
+}
+
+.mls-rmse-box-input--crit:focus {
+  border-color: #dc2626;
+  box-shadow: 0 0 0 2px rgba(220, 38, 38, 0.15);
+}
+
+.mls-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  font-size: 10px;
+  font-weight: 700;
+  color: #0284c7;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  padding: 0;
+}
+.mls-toggle-btn:hover { color: #0369a1; }
+
+.mls-card-body-content {
+  margin-top: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 /* Action Buttons */
 .mls-btn-action {
   font-size: 11px;
-  font-weight: 700;
-  padding: 5px 12px;
-  border-radius: 2px;
+  font-weight: 800;
+  letter-spacing: 0.03em;
+  padding: 6px 12px;
+  border-radius: 4px;
   border: 1px solid transparent;
   cursor: pointer;
   flex-shrink: 0;
@@ -1070,32 +1592,77 @@ onMounted(async () => {
   align-items: center;
   justify-content: center;
 }
-.mls-btn-action:disabled { opacity: 0.45; cursor: not-allowed; }
+.mls-btn-action:disabled {
+  background: #f1f5f9 !important;
+  border-color: #cbd5e1 !important;
+  color: #94a3b8 !important;
+  opacity: 0.7;
+  cursor: not-allowed;
+}
 .mls-btn-action--primary {
   background: #0284c7;
   border-color: #0284c7;
   color: #ffffff;
   flex: 1;
 }
-.mls-btn-action--primary:not(:disabled):hover { background: #0369a1; border-color: #0369a1; }
+.mls-btn-action--primary:not(:disabled):hover {
+  background: #0369a1;
+  border-color: #0369a1;
+}
 .mls-btn-action--ghost {
   background: #ffffff;
   border-color: #cbd5e1;
-  color: #475569;
+  color: #334155;
 }
-.mls-btn-action--ghost:not(:disabled):hover { background: #f1f5f9; border-color: #94a3b8; color: #0f172a; }
-
-/* 2. Search Panel (Filter / Reset Filter Card) */
-.mls-search-card {
-  margin: 0 10px 6px 10px;
-  padding: 10px 12px;
+.mls-btn-action--ghost:not(:disabled):hover {
   background: #f8fafc;
-  border: 1px solid #cbd5e1;
-  border-radius: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  flex-shrink: 0;
+  border-color: #94a3b8;
+  color: #0f172a;
+}
+
+/* ── RMSE Alert Highlighting in KPI Cards ── */
+.mls-metric-card--rmse-warn {
+  background: #fffbeb !important;
+  border-color: #fcd34d !important;
+  border-left-color: #d97706 !important;
+}
+
+.mls-metric-card--rmse-crit {
+  background: #fef2f2 !important;
+  border-color: #fca5a5 !important;
+  border-left-color: #dc2626 !important;
+}
+
+.mls-rmse-val--warn {
+  color: #b45309 !important;
+  font-weight: 800 !important;
+}
+
+.mls-rmse-val--crit {
+  color: #b91c1c !important;
+  font-weight: 800 !important;
+}
+
+.mls-alert-pill {
+  font-size: 8px;
+  font-weight: 900;
+  letter-spacing: 0.05em;
+  padding: 1px 4px;
+  border-radius: 2px;
+  margin-left: 3px;
+  vertical-align: middle;
+}
+
+.mls-alert-pill--warn {
+  background: #fef3c7;
+  color: #92400e;
+  border: 1px solid #fde68a;
+}
+
+.mls-alert-pill--crit {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
 }
 
 .mls-search-title {
@@ -1117,7 +1684,7 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   border: 1px solid #cbd5e1;
-  border-radius: 2px;
+  border-radius: 4px;
   background: #ffffff;
   padding-left: 8px;
   transition: border-color 0.15s ease;
@@ -1200,17 +1767,17 @@ onMounted(async () => {
 }
 
 .mls-btn-filter {
-  padding: 5px 8px;
+  padding: 6px 10px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   background: #0284c7;
   border: 1px solid #0284c7;
   color: #ffffff;
-  border-radius: 2px;
+  border-radius: 4px;
   cursor: pointer;
-  transition: background 0.15s ease;
+  transition: all 0.15s ease;
   font-family: 'Manrope', sans-serif;
   display: flex;
   align-items: center;
@@ -1219,15 +1786,15 @@ onMounted(async () => {
 .mls-btn-filter:hover { background: #0369a1; border-color: #0369a1; }
 
 .mls-btn-reset {
-  padding: 5px 8px;
+  padding: 6px 10px;
   font-size: 11px;
-  font-weight: 700;
+  font-weight: 800;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   background: #ffffff;
   border: 1px solid #cbd5e1;
   color: #475569;
-  border-radius: 2px;
+  border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s ease;
   font-family: 'Manrope', sans-serif;
@@ -1255,6 +1822,15 @@ onMounted(async () => {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: #64748b;
+  display: flex;
+  align-items: center;
+}
+
+.mls-select-count-badge {
+  font-size: 11px;
+  font-weight: 800;
+  color: #0284c7;
+  margin-left: 4px;
 }
 
 .mls-table-control-actions {
@@ -1345,11 +1921,29 @@ onMounted(async () => {
   min-height: 0;
   overflow-y: auto;
   background: #ffffff;
+  scrollbar-width: thin;
+  scrollbar-color: #94a3b8 #f1f5f9;
 }
-.mls-table-body::-webkit-scrollbar { width: 5px; }
-.mls-table-body::-webkit-scrollbar-track { background: #f8fafc; }
-.mls-table-body::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 2px; }
-.mls-table-body::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+.mls-table-body::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+.mls-table-body::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-left: 1px solid #e2e8f0;
+}
+.mls-table-body::-webkit-scrollbar-thumb {
+  background: #94a3b8;
+  border-radius: 3px;
+}
+.mls-table-body::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+.mls-table-body::-webkit-scrollbar-button {
+  display: none;
+  width: 0;
+  height: 0;
+}
 
 .mls-empty-state {
   padding: 16px 10px;
@@ -1397,6 +1991,238 @@ onMounted(async () => {
   height: 15px;
   accent-color: #0284c7;
   cursor: pointer;
+}
+
+/* ── Sleek Table Metrics Cell & Row Expand Styles ── */
+.mls-th-metrics,
+.mls-td-metrics {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+}
+
+.mls-metrics-val {
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mls-row-expand-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 4px;
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #64748b;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  padding: 0;
+  flex-shrink: 0;
+}
+
+.mls-row-expand-btn:hover {
+  background: #f1f5f9;
+  border-color: #0284c7;
+  color: #0284c7;
+}
+
+.mls-row-expand-btn--open {
+  background: #0284c7;
+  border-color: #0284c7;
+  color: #ffffff;
+}
+
+.mls-row-drawer {
+  background: #f8fafc;
+  border-bottom: 1px solid #cbd5e1;
+  padding: 8px 12px;
+  box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.04);
+}
+
+.mls-drawer-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+}
+
+.mls-drawer-stat {
+  display: flex;
+  flex-direction: column;
+}
+
+.mls-drawer-label {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  font-family: 'Manrope', sans-serif;
+}
+
+.mls-drawer-val {
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mls-drawer-footer {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #cbd5e1;
+  font-size: 11px;
+  color: #475569;
+  font-family: 'Manrope', sans-serif;
+}
+
+.mls-drawer-time-range strong {
+  color: #0f172a;
+  font-weight: 700;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+/* ── Simplified 4 KPI Slots Banner ── */
+.mls-metrics-summary-bar {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+  padding: 8px 12px;
+  background: #ffffff;
+  border-bottom: 1px solid #cbd5e1;
+}
+
+.mls-metric-card {
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-left: 3.5px solid #0284c7;
+  border-radius: 6px;
+  padding: 8px 10px;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+
+.mls-metric-card--inactive {
+  background: #f8fafc !important;
+  border: 1px dashed #cbd5e1 !important;
+  border-left: 3.5px solid #cbd5e1 !important;
+  box-shadow: none !important;
+}
+
+.mls-metric-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.mls-metric-title-group {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.mls-metric-duration-chip {
+  font-size: 9.5px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  background: #f0f9ff;
+  color: #0284c7;
+  border: 1px solid #bae6fd;
+  padding: 0px 5px;
+  border-radius: 3px;
+  line-height: 1.25;
+}
+
+.mls-metric-indicator {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.mls-metric-badge-text {
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #334155;
+  font-family: 'Manrope', sans-serif;
+}
+
+.mls-metric-card--inactive .mls-metric-badge-text {
+  color: #94a3b8 !important;
+}
+
+.mls-metric-ts {
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  font-size: 10.5px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.mls-metric-card--inactive .mls-metric-ts {
+  color: #cbd5e1 !important;
+  font-style: italic;
+}
+
+.mls-metric-card-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0;
+  margin-top: 2px;
+}
+
+.mls-metric-stat {
+  display: flex;
+  flex-direction: column;
+  padding: 0 8px;
+  border-right: 1px solid #e2e8f0;
+}
+
+.mls-metric-stat:first-child {
+  padding-left: 0;
+}
+
+.mls-metric-stat:last-child {
+  border-right: none;
+  padding-right: 0;
+}
+
+.mls-metric-card--inactive .mls-metric-stat {
+  border-right-color: #cbd5e1 !important;
+}
+
+.mls-metric-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  font-family: 'Manrope', sans-serif;
+  margin-bottom: 1px;
+}
+
+.mls-metric-card--inactive .mls-metric-label {
+  color: #cbd5e1 !important;
+}
+
+.mls-metric-val {
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.mls-metric-card--inactive .mls-metric-val {
+  color: #cbd5e1 !important;
 }
 
 /* ════════════════════════════════════════

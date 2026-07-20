@@ -664,7 +664,13 @@ def _fetch_pressure_log_files(machine_id, start_date=None, end_date=None):
         SELECT id,
                file_name,
                time_stamp,
-               COALESCE(baseline, FALSE) AS baseline
+               COALESCE(baseline, FALSE) AS baseline,
+               mean_pressure,
+               peak_pressure,
+               start_time,
+               end_time,
+               cycle_duration_seconds,
+               pressure_ripple
         FROM {schema_name}.pressure_log_file
         WHERE {' AND '.join(filters)}
         ORDER BY time_stamp DESC, id DESC
@@ -760,17 +766,37 @@ def get_pressure_log_file_listing(machine_name, start_date=None, end_date=None):
 
     baseline_log_file_id = None
     log_files = []
-    for log_file_id, file_name, time_stamp, is_baseline in log_rows:
+    for row in log_rows:
+        log_file_id = row[0]
+        file_name = row[1]
+        time_stamp = row[2]
+        is_baseline = row[3]
+        mean_pressure = row[4]
+        peak_pressure = row[5]
+        start_time = row[6]
+        end_time = row[7]
+        cycle_duration_seconds = row[8]
+        pressure_ripple = row[9]
+
         if is_baseline and baseline_log_file_id is None:
             baseline_log_file_id = log_file_id
-        # Display/list labels use pressure_log_file.time_stamp (seconds precision).
+
         formatted_ts = _format_pressure_ist_datetime_seconds(time_stamp)
+        formatted_start_time = _format_pressure_ist_datetime_seconds(start_time) if start_time else None
+        formatted_end_time = _format_pressure_ist_datetime_seconds(end_time) if end_time else None
+
         log_files.append({
             "log_file_id": log_file_id,
             "file_name": file_name,
             "time_stamp": formatted_ts,
             "processed_time": formatted_ts,
             "baseline": bool(is_baseline),
+            "mean_pressure": float(mean_pressure) if mean_pressure is not None else None,
+            "peak_pressure": float(peak_pressure) if peak_pressure is not None else None,
+            "start_time": formatted_start_time,
+            "end_time": formatted_end_time,
+            "cycle_duration_seconds": float(cycle_duration_seconds) if cycle_duration_seconds is not None else None,
+            "pressure_ripple": float(pressure_ripple) if pressure_ripple is not None else None,
         })
 
     return {
