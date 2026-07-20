@@ -283,7 +283,7 @@ ORDER BY machine_id, created_at DESC NULLS LAST, "timestamp" DESC NULLS LAST;
 
 ## Deploy checklist
 
-1. Restart backend on `172.18.100.87:8000`
+1. Restart backend on `172.18.100.99:8000`
 2. Hard refresh frontend (`Ctrl + Shift + R`)
 3. Verify `/factory/layout` → BLOCK has 9 machines for APC_BATTERY (7 + 2 pressure)
 4. Verify `/factory-state-mtlinki-test/AIR_PRESSURE` → 2 machines only

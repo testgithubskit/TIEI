@@ -89,7 +89,7 @@ export const useManufacturingInformationSystemStore = defineStore('manufacturing
   actions: {
 
     async fetchAndUpdateAvailableDocuments() {
-      const url = 'http://172.18.100.87:8000/api/v1/get_sample_documents';
+      const url = 'http://172.18.100.99:8000/api/v1/get_sample_documents';
       console.log("from actions");
       try {
         console.log(1);

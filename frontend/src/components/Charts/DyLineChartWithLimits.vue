@@ -16,6 +16,8 @@ const hoverTooltip = ref({
   top: 0,
   xText: '',
   yLines: [],
+  canvasX: 0,
+  canvasY: 0,
 });
 
 const emit = defineEmits(['data-hovered']);
@@ -485,6 +487,41 @@ function compareModeXTicker(min, max, pixels) {
   return ticks;
 }
 
+function getCustomInteractionModel() {
+  const model = Object.assign({}, dygraph.defaultInteractionModel);
+  const origMouseDown = model.mousedown;
+  
+  model.mousedown = function(event, g, context) {
+    if (event.button === 1) { // Middle click
+      event.preventDefault();
+      const mockEvent = new MouseEvent('mousedown', {
+        bubbles: event.bubbles,
+        cancelable: event.cancelable,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        button: 0,
+        buttons: 1,
+        shiftKey: true,
+        view: window,
+      });
+      document.body.style.cursor = 'move';
+      origMouseDown(mockEvent, g, context);
+    } else {
+      origMouseDown(event, g, context);
+    }
+  };
+  
+  const origMouseUp = model.mouseup;
+  model.mouseup = function(event, g, context) {
+    if (context.isPanning) {
+      document.body.style.cursor = 'default';
+    }
+    origMouseUp(event, g, context);
+  };
+  
+  return model;
+}
+
 function buildOptions() {
   const pressureUi = isPressureCompareUi.value;
   const elapsedAxis = useElapsedXAxis.value;
@@ -558,25 +595,27 @@ function buildOptions() {
     drawPoints: false,
     connectSeparatedPoints: false,
     drawGrid: true,
-    gridLineColor: 'rgba(100, 116, 139, 0.28)',
+    gridLineColor: '#cbd5e1',
     gridLineWidth: 1,
+    gridLinePattern: [4, 4],
     animatedZooms: true,
     highlightCircleSize: 3,
     axisLineWidth: 1,
-    axisLineColor: 'rgb(148, 163, 184)',
-    axisLabelFontSize: 14,
-    xLabelHeight: 52,
+    axisLineColor: '#94a3b8',
+    axisLabelFontSize: 11,
+    xLabelHeight: elapsedAxis ? 28 : 52,
     stepPlot: props.stepPlot,
     colors,
     legend: 'never',
     labelsSeparateLines: true,
     showLabelsOnHighlight: false,
+    interactionModel: getCustomInteractionModel(),
     highlightCallback: handleHover,
     unhighlightCallback: hideHoverTooltip,
     zoomCallback: (minDate, maxDate) => updateZoomState(minDate, maxDate),
     underlayCallback: (ctx, area) => {
       ctx.save();
-      ctx.fillStyle = 'rgba(241, 245, 249, 0.92)';
+      ctx.fillStyle = '#ffffff';
       ctx.fillRect(area.x, area.y, area.w, area.h);
       ctx.restore();
     },
@@ -636,23 +675,66 @@ function handleHover(event, x, points) {
       && point.yval != null
       && !Number.isNaN(Number(point.yval))
     ))
-    .map((point) => ({
-      label: point.name,
-      value: `${Math.round(Number(point.yval) * 100) / 100} Pa`,
-      color: point.color || 'rgb(15, 23, 42)',
-    }));
+    .map((point) => {
+      let seriesColor = 'rgb(15, 23, 42)';
+      if (chart.value) {
+        const props = chart.value.getPropertiesForSeries(point.name);
+        if (props && props.color) {
+          seriesColor = props.color;
+        }
+      }
+      return {
+        label: point.name,
+        value: `${Math.round(Number(point.yval) * 100) / 100} Pa`,
+        color: seriesColor,
+      };
+    });
 
   if (!yLines.length) {
     hideHoverTooltip();
     return;
   }
 
+  let canvasX = 0;
+  let canvasY = 0;
+
   let left = 12;
   let top = 12;
-  if (event && plotArea.value) {
-    const rect = plotArea.value.getBoundingClientRect();
-    left = Math.min(Math.max(8, event.clientX - rect.left + 14), Math.max(8, rect.width - 240));
-    top = Math.min(Math.max(8, event.clientY - rect.top + 14), Math.max(8, rect.height - (70 + yLines.length * 24)));
+  if (event && plotArea.value && chartContainer.value) {
+    const plotRect = plotArea.value.getBoundingClientRect();
+    const canvasRect = chartContainer.value.getBoundingClientRect();
+    
+    const mouseX = event.clientX - plotRect.left;
+    const mouseY = event.clientY - plotRect.top;
+
+    const validPoints = points.filter((p) => p.canvasx != null && !Number.isNaN(p.canvasx));
+    if (validPoints.length > 0) {
+      const offsetX = canvasRect.left - plotRect.left;
+      const offsetY = canvasRect.top - plotRect.top;
+      
+      canvasX = validPoints[0].canvasx + offsetX;
+      
+      let minDiff = Infinity;
+      let snappedY = validPoints[0].canvasy;
+      
+      for (const p of validPoints) {
+        if (p.canvasy != null && !Number.isNaN(p.canvasy) && !String(p.name).includes('Limit')) {
+          const pMouseY = p.canvasy + offsetY;
+          const diff = Math.abs(pMouseY - mouseY);
+          if (diff < minDiff) {
+            minDiff = diff;
+            snappedY = p.canvasy;
+          }
+        }
+      }
+      canvasY = snappedY + offsetY;
+    } else {
+      canvasX = mouseX;
+      canvasY = mouseY;
+    }
+
+    left = Math.min(Math.max(8, mouseX + 14), Math.max(8, plotRect.width - 240));
+    top = Math.min(Math.max(8, mouseY + 14), Math.max(8, plotRect.height - (70 + yLines.length * 24)));
   }
 
   hoverTooltip.value = {
@@ -661,6 +743,8 @@ function handleHover(event, x, points) {
     top,
     xText,
     yLines,
+    canvasX,
+    canvasY,
   };
 }
 
@@ -840,13 +924,14 @@ onBeforeUnmount(() => {
     class="dygraph-chart-panel dygraph-chart-panel--pressure"
   >
     <div
-      v-if="!hideHints || externalLegend.length || isZoomed || activeSeriesEntries.length > 1"
+      v-if="!hideHints || externalLegend.length || isZoomed || activeSeriesEntries.length > 0"
       class="dygraph-chart-toolbar"
       :class="{ 'dygraph-chart-toolbar--legend-only': hideHints }"
     >
       <div v-if="!hideHints" class="dygraph-chart-hints">
         <span class="dygraph-hint-chip">Scroll — zoom in / out</span>
         <span class="dygraph-hint-chip">Drag — select range</span>
+        <span class="dygraph-hint-chip">Shift+Drag — pan</span>
         <span class="dygraph-hint-chip">Double-click / Reset — full view</span>
       </div>
       <div class="dygraph-toolbar-right">
@@ -864,7 +949,7 @@ onBeforeUnmount(() => {
             <span class="dygraph-legend-item__label">{{ item.label }}</span>
           </span>
         </div>
-        <div v-else-if="activeSeriesEntries.length > 1" class="dygraph-series-chips">
+        <div v-else-if="activeSeriesEntries.length > 0" class="dygraph-series-chips">
           <span
             v-for="(entry, index) in activeSeriesEntries"
             :key="entry.label"
@@ -897,6 +982,19 @@ onBeforeUnmount(() => {
         class="dygraph-chart-plot-area dygraph-chart-plot-area--wheel"
       >
         <div ref="chartContainer" class="dygraph-chart-canvas" />
+        
+        <!-- Crosshairs -->
+        <div
+          v-if="hoverTooltip.visible"
+          class="dygraph-crosshair-x"
+          :style="{ left: `${hoverTooltip.canvasX}px` }"
+        />
+        <div
+          v-if="hoverTooltip.visible"
+          class="dygraph-crosshair-y"
+          :style="{ top: `${hoverTooltip.canvasY}px` }"
+        />
+
         <div
           v-if="hoverTooltip.visible"
           class="dygraph-custom-tooltip"
@@ -908,15 +1006,15 @@ onBeforeUnmount(() => {
               <span class="dygraph-custom-tooltip__meta-val">{{ hoverTooltip.xText }}</span>
             </div>
           </div>
-          <div
-            v-for="(line, index) in hoverTooltip.yLines"
-            :key="`${line.label}-${index}`"
-            class="dygraph-custom-tooltip__row"
-          >
-            <span class="dygraph-custom-tooltip__swatch" :style="{ backgroundColor: line.color }" />
-            <span class="dygraph-custom-tooltip__key">{{ line.label }}</span>
-            <span class="dygraph-custom-tooltip__val">{{ line.value }}</span>
-          </div>
+            <div
+              v-for="(line, idx) in hoverTooltip.yLines"
+              :key="idx"
+              class="dygraph-custom-tooltip__row"
+            >
+              <div class="dygraph-custom-tooltip__swatch" :style="{ backgroundColor: line.color }" />
+              <div class="dygraph-custom-tooltip__key">{{ line.label }}</div>
+              <div class="dygraph-custom-tooltip__val">{{ line.value }}</div>
+            </div>
         </div>
       </div>
     </div>
@@ -1016,28 +1114,35 @@ onBeforeUnmount(() => {
 
 .dygraph-hint-chip {
   font-size: 10px;
-  font-weight: 600;
-  color: rgb(51, 65, 85);
-  background: rgb(255, 255, 255);
-  border: 1px solid rgb(203, 213, 225);
-  border-radius: 0;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  background: #ffffff;
+  border: 1px solid #cbd5e1;
+  border-radius: 2px;
   padding: 3px 8px;
   white-space: nowrap;
+  font-family: 'Manrope', sans-serif;
 }
 
 .dygraph-reset-btn {
-  font-size: 11px;
-  font-weight: 700;
-  color: rgb(3, 105, 161);
-  background: rgb(224, 242, 254);
-  border: 1px solid rgb(125, 211, 252);
-  border-radius: 0;
-  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #0284c7;
+  background: #f0f9ff;
+  border: 1px solid #bae6fd;
+  border-radius: 2px;
+  padding: 4px 8px;
   cursor: pointer;
+  font-family: 'Manrope', sans-serif;
+  transition: all 0.15s ease;
 }
 
 .dygraph-reset-btn:hover {
-  background: rgb(186, 230, 253);
+  background: #e0f2fe;
 }
 
 .dygraph-series-chips {
@@ -1050,19 +1155,22 @@ onBeforeUnmount(() => {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 11px;
-  font-weight: 600;
-  color: rgb(51, 65, 85);
-  background: rgb(248, 250, 252);
-  border: 1px solid rgb(226, 232, 240);
-  border-radius: 999px;
-  padding: 4px 10px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  background: #f8fafc;
+  border: 1px solid #cbd5e1;
+  border-radius: 2px;
+  padding: 4px 8px;
+  font-family: 'Manrope', sans-serif;
 }
 
 .dygraph-series-chip__dot {
   width: 10px;
   height: 10px;
-  border-radius: 999px;
+  border-radius: 2px;
   display: inline-block;
 }
 
@@ -1077,13 +1185,15 @@ onBeforeUnmount(() => {
 .dygraph-y-label {
   writing-mode: vertical-rl;
   transform: rotate(180deg);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  color: rgb(100, 116, 139);
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
   text-align: center;
   padding: 8px 4px;
   flex-shrink: 0;
+  font-family: 'Manrope', sans-serif;
 }
 
 .dygraph-chart-plot-area {
@@ -1091,10 +1201,10 @@ onBeforeUnmount(() => {
   flex: 1;
   min-width: 0;
   min-height: 300px;
-  border: 1.5px solid #000;
-  border-radius: 0.75rem;
-  background: #fff;
-  box-shadow: 0 1px 2px 0 rgb(0 0 0 / 0.05);
+  border: 1px solid #e2e8f0;
+  border-radius: 3px;
+  background: #ffffff;
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
   box-sizing: border-box;
   overflow: visible;
   display: flex;
@@ -1112,8 +1222,28 @@ onBeforeUnmount(() => {
   min-height: 0;
   height: auto;
   box-sizing: border-box;
-  border-radius: 0.5rem;
-  background: rgb(248, 250, 252);
+  border-radius: 3px;
+  background: #ffffff;
+}
+
+.dygraph-crosshair-x {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  border-left: 1px dashed #94a3b8;
+  pointer-events: none;
+  z-index: 20;
+}
+
+.dygraph-crosshair-y {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 1px;
+  border-top: 1px dashed #94a3b8;
+  pointer-events: none;
+  z-index: 20;
 }
 
 .dygraph-custom-tooltip {
@@ -1123,9 +1253,9 @@ onBeforeUnmount(() => {
   max-width: 320px;
   padding: 10px 12px;
   background: rgba(255, 255, 255, 0.98);
-  border: 1.5px solid #000;
-  border-radius: 0.75rem;
-  box-shadow: 0 4px 16px rgba(15, 23, 42, 0.12);
+  border: 1px solid #cbd5e1;
+  border-radius: 3px;
+  box-shadow: 0 10px 25px -5px rgba(15, 23, 42, 0.1);
   pointer-events: none;
 }
 
@@ -1148,6 +1278,7 @@ onBeforeUnmount(() => {
 }
 
 .dygraph-custom-tooltip__meta-key {
+  font-family: 'Manrope', sans-serif;
   font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.04em;
@@ -1156,6 +1287,7 @@ onBeforeUnmount(() => {
 }
 
 .dygraph-custom-tooltip__meta-val {
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
   font-size: 12px;
   font-weight: 800;
   color: rgb(15, 23, 42);
@@ -1178,10 +1310,11 @@ onBeforeUnmount(() => {
   width: 9px;
   height: 9px;
   flex-shrink: 0;
-  border-radius: 1px;
+  border-radius: 2px;
 }
 
 .dygraph-custom-tooltip__key {
+  font-family: 'Manrope', sans-serif;
   flex: 1;
   min-width: 0;
   font-size: 11px;
@@ -1192,6 +1325,7 @@ onBeforeUnmount(() => {
 }
 
 .dygraph-custom-tooltip__val {
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
   font-size: 12px;
   font-weight: 800;
   color: rgb(15, 23, 42);
@@ -1200,17 +1334,19 @@ onBeforeUnmount(() => {
 }
 
 .dygraph-chart-panel--pressure :deep(.dygraph-axis-label-x) {
-  font-size: 13px;
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  font-size: 11px;
   font-weight: 800;
   color: rgb(30, 41, 59);
   white-space: pre-line;
   line-height: 1.25;
   text-align: center;
-  padding-bottom: 6px;
+  padding-top: 4px;
 }
 
 .dygraph-chart-panel--pressure :deep(.dygraph-axis-label-y) {
-  font-size: 13px;
+  font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
+  font-size: 11px;
   font-weight: 800;
   color: rgb(30, 41, 59);
 }

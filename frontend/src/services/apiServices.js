@@ -8,7 +8,7 @@ const getBaseUrl = () => {
   const isDevelopment = import.meta.env.DEV;
 
   if (isDevelopment) {
-    return 'http://172.18.100.87:8000/api/v1';
+    return 'http://172.18.100.99:8000/api/v1';
   }
 
   return import.meta.env.VITE_API_URL || 'https://maintenance.cmti.online/api/v1';

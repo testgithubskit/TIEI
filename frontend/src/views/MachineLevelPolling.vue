@@ -54,7 +54,7 @@ const machineName = 'ams_mcv_450';
 //   return homeStore.selectedMachine.name;
 // });
 
-const baseUrl = 'http://172.18.100.87:8000/api/v1/machines/';
+const baseUrl = 'http://172.18.100.99:8000/api/v1/machines/';
 
 // Using string interpolation
 const url = `${baseUrl}${encodeURIComponent(machineName)}`;

@@ -13,7 +13,7 @@ export const usePlantPollingParameterGridStore = defineStore('PlantPollingParame
 
     async fetchAndUpdateAvailableParameters() {
 
-      const url = `http://172.18.100.87:8000/api/v1/machines/ams_mcv_450/parameters`;
+      const url = `http://172.18.100.99:8000/api/v1/machines/ams_mcv_450/parameters`;
 
       try {
         const response = await axios.get(url);

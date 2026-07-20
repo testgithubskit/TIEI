@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://172.18.100.87:8000';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://172.18.100.99:8000';
 
 const emailUserService = {
   // Get all email users

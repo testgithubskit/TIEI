@@ -332,7 +332,7 @@ export const useMachineSamplingStore = defineStore('machineSampling', {
     async fetchAndUpdateAvailableParameters() {
       const machineName = this.selectedMachine.name;
   
-      const url = `http://172.18.100.87:8000/api/v1/machines/${machineName}/parameters`;
+      const url = `http://172.18.100.99:8000/api/v1/machines/${machineName}/parameters`;
   
       try {
         const response = await axios.get(url);

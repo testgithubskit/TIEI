@@ -2,6 +2,7 @@ import { createRouter, createWebHashHistory } from "vue-router";
 import Home from "@/views/HomeView.vue";
 import MachineLevelPolling from "@/views/MachineLevelPolling.vue";
 import MachineLevelSamplingWithLimits from "@/views/MachineLevelSamplingWithLimits.vue";
+import AirPressureSamplingView from "@/views/AirPressureSamplingView.vue";
 import PlantLevelPollingKpi from "@/views/PlantLevelPollingKpi.vue";
 import FactoryPollOverview from "@/views/FactoryPollOverview.vue";
 import SparePollOverview from "@/views/SparePollOverview.vue";
@@ -159,6 +160,15 @@ const routes = [
     path: "/machine-level-sampling",
     name: "Machine Level Sampling",
     component: MachineLevelSamplingWithLimits,
+  },
+  {
+    meta: {
+      title: "Air-Pressure-Sampling",
+      requiresAuth: true,
+    },
+    path: "/air-pressure-sampling",
+    name: "Air Pressure Sampling",
+    component: AirPressureSamplingView,
   },
 
   {

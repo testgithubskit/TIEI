@@ -61,12 +61,18 @@ const navigationHistoryStore = useNavigationHistoryStore();
 
 const isMachineLevelSamplingPage = computed(() => (
   String(route.path || '').includes('machine-level-sampling')
+  || String(route.path || '').includes('air-pressure-sampling')
   || String(route.name || '').toLowerCase().includes('machine level sampling')
+  || String(route.name || '').toLowerCase().includes('air pressure sampling')
 ));
 
 /** Layout back + hide plant toggle only for air-pressure / honing sampling — not other machines */
 const isPressureSamplingPage = computed(() => (
-  isMachineLevelSamplingPage.value && !!samplingStore.isPressureContext
+  isMachineLevelSamplingPage.value && (
+    !!samplingStore.isPressureContext
+    || String(route.path || '').includes('air-pressure-sampling')
+    || String(route.name || '').toLowerCase().includes('air pressure sampling')
+  )
 ));
 
 const showPlantToggle = computed(() => !isPressureSamplingPage.value);
@@ -198,7 +204,7 @@ const menuClick = (event, item) => {
         @aside-lg-close-click="isAsideLgActive = false"
       />
       <slot />
-      <FooterBar />
+      <FooterBar v-if="!isPressureSamplingPage" />
     </div>
   </div>
 </template>

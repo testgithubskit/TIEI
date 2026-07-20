@@ -359,7 +359,7 @@ const fetchCycleTimeData = async () => {
     const fromTimeStr = formatDate(fromTime);
     const toTimeStr = formatDate(toTime);
 
-    const url = `http://172.18.100.87:8000/api/v1/cycle-time/factory-layout?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
+    const url = `http://172.18.100.99:8000/api/v1/cycle-time/factory-layout?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
 
     const response = await axios.get(url);
     cycleTimeData.value = response.data;

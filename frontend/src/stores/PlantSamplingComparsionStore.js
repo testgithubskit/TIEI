@@ -26,7 +26,7 @@ export const usePlantSamplingComparsionStore = defineStore('PlantSamplingCompars
   actions: {
 
     async fetchAndUpdateAvailableMachines() {
-      const url = 'http://172.18.100.87:8000/api/v1/machines/';
+      const url = 'http://172.18.100.99:8000/api/v1/machines/';
       console.log("from actions");
       try {
         console.log(1);
@@ -47,7 +47,7 @@ export const usePlantSamplingComparsionStore = defineStore('PlantSamplingCompars
     async fetchAndUpdateAvailableParameters() {
       const machineName = this.selectedMachines.names[0];
   
-      const url = `http://172.18.100.87:8000/api/v1/machines/${machineName}/parameters`;
+      const url = `http://172.18.100.99:8000/api/v1/machines/${machineName}/parameters`;
   
       try {
         const response = await axios.get(url);

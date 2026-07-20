@@ -183,7 +183,7 @@ const handleSearch = () => {
     }
 
     // Adjust URL according to your backend endpoint
-    const url = `http://172.18.100.87:8000/api/v1/spm/laser/${specialPurposeMachinePositionStore.machine}/similar-part?part_number=${searchQuery.value}`;
+    const url = `http://172.18.100.99:8000/api/v1/spm/laser/${specialPurposeMachinePositionStore.machine}/similar-part?part_number=${searchQuery.value}`;
 
     fetch(url)
       .then(response => response.json())

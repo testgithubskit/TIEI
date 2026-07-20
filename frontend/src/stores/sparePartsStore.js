@@ -4,7 +4,7 @@ import axios from 'axios';
 import { message } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
-const API_BASE_URL = 'http://172.18.100.87:8000/api/v1';
+const API_BASE_URL = 'http://172.18.100.99:8000/api/v1';
 
 export const useSparePartsStore = defineStore('spareParts', {
   state: () => ({

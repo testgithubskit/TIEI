@@ -25,7 +25,7 @@ export const usePlantPollingOverviewTableStore = defineStore('plantPollingOvervi
   actions: {
 
     async fetchAndUpdateAvailableMachines() {
-      const url = 'http://172.18.100.87:8000/api/v1/machines/';
+      const url = 'http://172.18.100.99:8000/api/v1/machines/';
       console.log("from actions");
       try {
         console.log(1);

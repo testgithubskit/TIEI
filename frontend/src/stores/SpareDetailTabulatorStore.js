@@ -19,7 +19,7 @@ export const useSparePartTabulatorStore = defineStore('sparePartTabulatorStore',
 
   actions: {
     async fetchSparePartData(machineName) {
-      const url = `http://172.18.100.87:8000/api/v1/${machineName}/spareParts`;
+      const url = `http://172.18.100.99:8000/api/v1/${machineName}/spareParts`;
 
       try {
         const response = await fetch(url);

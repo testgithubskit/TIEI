@@ -187,7 +187,7 @@ const setDefaultTimeRange = () => {
 // Function to fetch state data from the endpoint
 const fetchStateData = async () => {
   try {
-    const response = await axios.get('http://172.18.100.87:8000/api/v1/get_machine_state_data');
+    const response = await axios.get('http://172.18.100.99:8000/api/v1/get_machine_state_data');
     const responseData = response.data;
 
     // Process the response data as needed
@@ -348,7 +348,7 @@ const fetchCycleTimeData = async () => {
     const fromTimeStr = fromTime.toISOString().replace('T', ' ');
     const toTimeStr = toTime.toISOString().replace('T', ' ');
 
-    const url = `http://172.18.100.87:8000/api/v1/cycle-time/machine/${encodeURIComponent(machineName)}?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
+    const url = `http://172.18.100.99:8000/api/v1/cycle-time/machine/${encodeURIComponent(machineName)}?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
 
     const response = await axios.get(url);
     cycleTimeData.value = response.data;
@@ -392,7 +392,7 @@ const handleSelectedMachineUpdate = async (selectedItem) => {
 
 
 async function fetchMachineParameterData(machineName, parameterName, startTime, endTime) {
-  const url = `http://172.18.100.87:8000/api/v1/machines/${machineName}/parameters/${parameterName}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
+  const url = `http://172.18.100.99:8000/api/v1/machines/${machineName}/parameters/${parameterName}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
 
   try {
     const response = await axios.get(url);

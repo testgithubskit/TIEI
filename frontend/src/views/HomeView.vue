@@ -232,7 +232,7 @@ const handleSelectedMachineUpdate = async (selectedItem) => {
 
 
 async function fetchMachineParameterData(machineName, parameterName, startTime, endTime) {
-  const url = `http://172.18.100.87:8000/api/v1/machines/${machineName}/parameters/${parameterName}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
+  const url = `http://172.18.100.99:8000/api/v1/machines/${machineName}/parameters/${parameterName}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
 
   try {
     const response = await axios.get(url);

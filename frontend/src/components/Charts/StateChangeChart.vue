@@ -175,7 +175,7 @@ option = ref({
 
 // const fetchData = async () => {
 //   try {
-//     const response = await axios.get('http://172.18.100.87:8000/machines');
+//     const response = await axios.get('http://172.18.100.99:8000/machines');
 //     console.log("OKOKOKOKOKOK");
 //     const newData = response.data;
 //     // Assuming the structure of newData is similar to props.chartData

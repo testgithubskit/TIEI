@@ -193,7 +193,7 @@ const handleSelectedParameterUpdate = async (selectedItem) => {
 
 
 async function fetchPlantParameterData(parameterName, startTime, endTime) {
-  const url = `http://172.18.100.87:8000/api/v1/machines/ams_mcv_450/parameters/${parameterName}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
+  const url = `http://172.18.100.99:8000/api/v1/machines/ams_mcv_450/parameters/${parameterName}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
 
   try {
     const response = await axios.get(url);

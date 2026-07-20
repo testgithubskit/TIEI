@@ -38,14 +38,14 @@ console.log("From polling");
 
 const machineName = 'ams_mcv_450';
 
-const baseUrl = 'http://172.18.100.87:8000/api/v1/machines/';
+const baseUrl = 'http://172.18.100.99:8000/api/v1/machines/';
 
 // Using string interpolation
 const url = `${baseUrl}${encodeURIComponent(machineName)}`;
 
 const fetchData = () => {
     try {
-    axios.get('http://172.18.100.87:8000/api/v1/get_production_lines').then(response => {
+    axios.get('http://172.18.100.99:8000/api/v1/get_production_lines').then(response => {
       productionLines.value = response.data;
       console.log("production lines", productionLines.value);
     });

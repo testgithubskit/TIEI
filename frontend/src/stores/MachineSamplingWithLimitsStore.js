@@ -37,6 +37,9 @@ const SAMPLING_SESSION_KEY = 'machineSamplingWithLimitsSession';
 export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWithLimits', {
   state: () => ({
     machine: 'T_H_OP150',
+    line: 'T&H Line',
+    lineName: 'T&H Line',
+    line_name: 'T&H Line',
     parameterGroup: '',
     displayName: 'X',
     actualParameterName: 'ApcBatLow0Path1THOP150',
@@ -200,8 +203,6 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         const response = await backendApi.get(url);
         this.applyTimelineResponse(response.data);
         this.chartFetchMessage = response.data.message || '';
-        this.alertMessage = 'Fetched Data';
-        this.isSuccessMessage = true;
       } catch (error) {
         console.error('Error Fetching Data:', error);
         this.alertMessage = error.response?.data?.detail || 'Fetching failed. Please try again.';
@@ -226,8 +227,6 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         const response = await backendApi.get(url);
         this.applyTimelineResponse(response.data);
         this.chartFetchMessage = response.data.message || '';
-        this.alertMessage = response.data.message || 'Fetched Data';
-        this.isSuccessMessage = true;
       } catch (error) {
         console.error('Error fetching pressure data:', error);
         this.alertMessage = error.response?.data?.detail || 'Fetching pressure data failed. Please try again.';
@@ -255,7 +254,9 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
       try {
         const response = await backendApi.get(url);
         this.pressureLogFiles = Array.isArray(response.data.log_files) ? response.data.log_files : [];
-        this.baselineLogFileId = response.data.baseline_log_file_id ?? null;
+        if (response.data.baseline_log_file_id !== undefined && response.data.baseline_log_file_id !== null) {
+          this.baselineLogFileId = response.data.baseline_log_file_id;
+        }
         return response.data;
       } catch (error) {
         console.error('Error fetching pressure log files:', error);
