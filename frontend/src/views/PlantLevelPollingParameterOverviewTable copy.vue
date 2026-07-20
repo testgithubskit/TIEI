@@ -1,4 +1,5 @@
 <script setup>
+import { backendApi } from '@/services/apiServices';
 import { computed, ref, onMounted, onBeforeMount, watch } from "vue";
 import { useMainStore } from "@/stores/main";
 import {
@@ -7,7 +8,6 @@ import {
   mdiGithub,
 } from "@mdi/js";
 
-import axios from 'axios';
 
 import * as chartConfig from "@/components/Charts/chart.config.js";
 import DropDown from "@/components/DropDown.vue";
@@ -40,13 +40,13 @@ const machineName = 'ams_mcv_450';
 //   return plantLevelPollingStore.selectedMachine.name;
 // });
 
-const baseUrl = 'http://172.18.100.99:8000/api/v1/machines/';
+const baseUrl = '/machines/';
 
 // Using string interpolation
 const url = `${baseUrl}${encodeURIComponent(machineName)}`;
 
 const fetchData = () => {
-  axios.get(url)
+  backendApi.get(url)
     .then(response => {
       const backendSections = response.data.sections;
 
@@ -84,7 +84,7 @@ const fetchData = () => {
     });
 
     try {
-    axios.get('http://172.18.100.99:8000/api/v1/get_production_lines').then(response => {
+    backendApi.get('/get_production_lines').then(response => {
       productionLines.value = response.data;
       console.log("production lines", response.data);
     }).catch(error => {});

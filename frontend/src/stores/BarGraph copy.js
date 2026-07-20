@@ -29,7 +29,7 @@ export const useBarChart = defineStore('BarChart', {
       }
     },
     async fetchAvailableMachines() { // Add method to fetch available machines
-      const url = 'http://172.18.100.99:8000/api/v1/machines';
+      const url = '/machines';
       try {
         const response = await backendApi.get(url);
         this.availableMachines = response.data; // Access 'data' property to get the list of machines

@@ -1,5 +1,5 @@
+import { backendApi } from '@/services/apiServices';
 import { defineStore } from 'pinia';
-import axios from 'axios';
 
 
 export const usePlantSamplingOverviewStore = defineStore('PlantSamplingOverview', {
@@ -17,10 +17,10 @@ export const usePlantSamplingOverviewStore = defineStore('PlantSamplingOverview'
 
     async fetchAndUpdateAvailableParameters() {
   
-      const url = `http://172.18.100.99:8000/api/v1/machines/ams_mcv_450/parameters`;
+      const url = `/machines/ams_mcv_450/parameters`;
   
       try {
-        const response = await axios.get(url);
+        const response = await backendApi.get(url);
         const availableParameters = response.data.parameters;
         console.log('Available parameters:', availableParameters);
         this.SelectedParmeter.availableParameters = availableParameters;

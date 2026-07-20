@@ -1,3 +1,4 @@
+import { backendApi } from '@/services/apiServices';
 import { defineStore } from 'pinia';
 import {
   mdiAccountMultiple,
@@ -5,7 +6,6 @@ import {
   mdiChartTimelineVariant
 } from "@mdi/js";
 
-import axios from 'axios';
 
 import CardBoxWidgetPlain from "@/components/CardBoxWidgetPlain.vue";
 import CardBoxMetric from "@/components/CardBoxMetric.vue";
@@ -25,11 +25,11 @@ export const usePlantPollingOverviewTableStore = defineStore('plantPollingOvervi
   actions: {
 
     async fetchAndUpdateAvailableMachines() {
-      const url = 'http://172.18.100.99:8000/api/v1/machines/';
+      const url = '/machines/';
       console.log("from actions");
       try {
         console.log(1);
-        const response = await axios.get(url);
+        const response = await backendApi.get(url);
         console.log(2);
         const machines = response.data.machines;
         console.log('Available machines:', machines);

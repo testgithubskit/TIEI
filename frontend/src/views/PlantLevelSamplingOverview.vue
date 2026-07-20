@@ -1,11 +1,11 @@
 <script setup>
+import { backendApi } from '@/services/apiServices';
 import { computed, ref, onMounted, watch, onBeforeMount } from "vue";
 import { useMainStore } from "@/stores/main";
 import {
   mdiCoffeeMaker
 } from "@mdi/js";
 
-import axios from 'axios';
 
 import LineChartDyGraph from "@/components/Charts/LineChartDyGraph.vue";
 import SectionMain from "@/components/SectionMain.vue";
@@ -193,10 +193,10 @@ const handleSelectedParameterUpdate = async (selectedItem) => {
 
 
 async function fetchPlantParameterData(parameterName, startTime, endTime) {
-  const url = `http://172.18.100.99:8000/api/v1/machines/ams_mcv_450/parameters/${parameterName}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
+  const url = `/machines/ams_mcv_450/parameters/${parameterName}?startTime=${encodeURIComponent(startTime)}&endTime=${encodeURIComponent(endTime)}`;
 
   try {
-    const response = await axios.get(url);
+    const response = await backendApi.get(url);
     const responseData = response.data;
     
     // Convert the first element of each array to a JavaScript Date object

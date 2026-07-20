@@ -22,7 +22,7 @@ export const useSparePartStore = defineStore('sparePartStore', {
 
   actions: {
     async fetchSparePartData(machineName) {
-      const url = `http://172.18.100.99:8000/api/v1/${machineName}/spareParts`;
+      const url = `/${machineName}/spareParts`;
 
       try {
         const response = await fetch(url);
@@ -128,7 +128,7 @@ export const useSparePartStore = defineStore('sparePartStore', {
       // Implement your logic to delete the spare part
       console.log('Deleting spare part:', deletedPart);
 
-      const url = `http://localhost:7788/delete/${deletedPart.id}`;
+      const url = `/delete/${deletedPart.id}`;
       try {
         // Send a delete request to the backend
         const response = await backendApi.delete(url);

@@ -1,6 +1,6 @@
+import { backendApi } from '@/services/apiServices';
 import { defineStore } from 'pinia';
 
-import axios from 'axios';
 
 
 export const useManufacturingInformationSystemStore = defineStore('manufacturingInformationSystem', {
@@ -89,11 +89,11 @@ export const useManufacturingInformationSystemStore = defineStore('manufacturing
   actions: {
 
     async fetchAndUpdateAvailableDocuments() {
-      const url = 'http://172.18.100.99:8000/api/v1/get_sample_documents';
+      const url = '/get_sample_documents';
       console.log("from actions");
       try {
         console.log(1);
-        const response = await axios.get(url);
+        const response = await backendApi.get(url);
         console.log(2);
         const departments = response.data;
         console.log('Available Departments:', departments);

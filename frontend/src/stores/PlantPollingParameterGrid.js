@@ -1,5 +1,5 @@
+import { backendApi } from '@/services/apiServices';
 import { defineStore } from 'pinia';
-import axios from 'axios';
 
 
 export const usePlantPollingParameterGridStore = defineStore('PlantPollingParameterGrid', {
@@ -13,10 +13,10 @@ export const usePlantPollingParameterGridStore = defineStore('PlantPollingParame
 
     async fetchAndUpdateAvailableParameters() {
 
-      const url = `http://172.18.100.99:8000/api/v1/machines/ams_mcv_450/parameters`;
+      const url = `/machines/ams_mcv_450/parameters`;
 
       try {
-        const response = await axios.get(url);
+        const response = await backendApi.get(url);
         console.log('Backend response:', response.data);
         const availableParameters = response.data.parameters || [];
         console.log('Parameters from backend:', availableParameters);

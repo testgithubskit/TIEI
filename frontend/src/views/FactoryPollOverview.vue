@@ -1,4 +1,5 @@
 <script setup>
+import { backendApi } from '@/services/apiServices';
 import { computed, ref, onMounted, onBeforeMount, watch, onBeforeUnmount } from "vue";
 import { useRoute } from 'vue-router';
 import {
@@ -6,7 +7,6 @@ import {
   mdiGithub,
 } from "@mdi/js";
 
-import axios from 'axios';
 
 import SectionMain from "@/components/SectionMain.vue";
 import LayoutAuthenticatedSimple from "@/layouts/LayoutAuthenticatedSimple.vue";
@@ -359,9 +359,9 @@ const fetchCycleTimeData = async () => {
     const fromTimeStr = formatDate(fromTime);
     const toTimeStr = formatDate(toTime);
 
-    const url = `http://172.18.100.99:8000/api/v1/cycle-time/factory-layout?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
+    const url = `/cycle-time/factory-layout?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
 
-    const response = await axios.get(url);
+    const response = await backendApi.get(url);
     cycleTimeData.value = response.data;
     
     // Update CYCLE_TIME state in availableParameters based on fetched data
@@ -418,17 +418,17 @@ const dashboardButton = computed(() => {
   if (DatabaseName.schemaName === "tiei_gd_plant_1") {
     return {
       text: "Open TNGA Dashboard",
-      link: "http://10.82.126.73/tiei_dynamic/#/factory-level-polling/parameter-overview/grid"
+      link: window.location.origin + "/tiei_dynamic/#/factory-level-polling/parameter-overview/grid"
     };
   } else if (DatabaseName.schemaName === "tiei_sample_4") {
     return {
       text: "Open GD Dashboard",
-      link: "http://10.82.126.73/tiei_dynamic_gd/#/factory-level-polling/parameter-overview/grid"
+      link: window.location.origin + "/tiei_dynamic_gd/#/factory-level-polling/parameter-overview/grid"
     };
   } else {
     return {
       text: "Open Dashboard",
-      link: "https://localhost:5173/tiei_dynamic/"
+      link: window.location.origin + "/tiei_dynamic/"
     };
   }
 });

@@ -1,10 +1,10 @@
+import { backendApi } from '@/services/apiServices';
 // stores/sparePartsStore.js
 import { defineStore } from 'pinia';
-import axios from 'axios';
 import { message } from 'ant-design-vue';
 import dayjs from 'dayjs';
 
-const API_BASE_URL = 'http://172.18.100.99:8000/api/v1';
+const API_BASE_URL = '';
 
 export const useSparePartsStore = defineStore('spareParts', {
   state: () => ({
@@ -18,7 +18,7 @@ export const useSparePartsStore = defineStore('spareParts', {
     async fetchActivities(startTime, endTime) {
       this.loading = true;
       try {
-        const response = await axios.get(
+        const response = await backendApi.get(
           `${API_BASE_URL}/spare-part-maintenance-activities`,
           {
             params: {
@@ -42,7 +42,7 @@ export const useSparePartsStore = defineStore('spareParts', {
       const loadingMessage = message.loading('Completing activity...', 0);
       this.loading = true;
       try {
-        const response = await axios.put(
+        const response = await backendApi.put(
           `${API_BASE_URL}/spare-part-activity/${id}/complete`,
           completionData
         );
@@ -82,7 +82,7 @@ export const useSparePartsStore = defineStore('spareParts', {
           responsible_person: changes.responsible_person_company_id
         };
 
-        const response = await axios.put(
+        const response = await backendApi.put(
           `${API_BASE_URL}/spare-part-activity/${id}/update`,
           requestBody
         );

@@ -1,5 +1,5 @@
+import { backendApi } from '@/services/apiServices';
 import { defineStore } from 'pinia';
-import axios from 'axios';
 
 
 function subtractHours(date, hours) {
@@ -26,11 +26,11 @@ export const usePlantSamplingComparsionStore = defineStore('PlantSamplingCompars
   actions: {
 
     async fetchAndUpdateAvailableMachines() {
-      const url = 'http://172.18.100.99:8000/api/v1/machines/';
+      const url = '/machines/';
       console.log("from actions");
       try {
         console.log(1);
-        const response = await axios.get(url);
+        const response = await backendApi.get(url);
         console.log(2);
         const machines = response.data.machines;
         console.log('Available machines:', machines);
@@ -47,10 +47,10 @@ export const usePlantSamplingComparsionStore = defineStore('PlantSamplingCompars
     async fetchAndUpdateAvailableParameters() {
       const machineName = this.selectedMachines.names[0];
   
-      const url = `http://172.18.100.99:8000/api/v1/machines/${machineName}/parameters`;
+      const url = `/machines/${machineName}/parameters`;
   
       try {
-        const response = await axios.get(url);
+        const response = await backendApi.get(url);
         const availableParameters = response.data.parameters;
         console.log('Available parameters:', availableParameters);
         this.selectedMachines.parameters.availableParameters = availableParameters;

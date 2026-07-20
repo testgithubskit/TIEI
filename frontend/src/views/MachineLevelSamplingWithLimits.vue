@@ -1,6 +1,6 @@
 <script setup>
+import { backendApi } from '@/services/apiServices';
 import { computed, ref, onMounted } from "vue";
-import axios from 'axios';
 
 import DyLineChartWithLimits from "@/components/Charts/DyLineChartWithLimits.vue";
 import TimePickerFlatEmitter from "@/components/TimePickerFlatEmitter.vue";
@@ -283,9 +283,9 @@ const fetchCycleTimeData = async () => {
     const fromTimeStr = formatDate(fromTime);
     const toTimeStr = formatDate(toTime);
 
-    const url = `http://172.18.100.99:8000/api/v1/cycle-time/machine/${encodeURIComponent(machineName)}?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
+    const url = `/cycle-time/machine/${encodeURIComponent(machineName)}?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
 
-    const response = await axios.get(url);
+    const response = await backendApi.get(url);
     cycleTimeData.value = response.data;
     
     if (response.data.warning_limit !== null && response.data.critical_limit !== null) {
@@ -351,9 +351,9 @@ const updateCycleTimeLimits = async () => {
     }
     
     const machineName = machineSamplingWithLimitsStore.machine;
-    const url = `http://172.18.100.99:8000/api/v1/cycle-time/limits/${encodeURIComponent(machineName)}?warning_limit=${warningLimit}&critical_limit=${criticalLimit}`;
+    const url = `/cycle-time/limits/${encodeURIComponent(machineName)}?warning_limit=${warningLimit}&critical_limit=${criticalLimit}`;
     
-    const response = await axios.put(url);
+    const response = await backendApi.put(url);
     
     cycleTimeLimits.value = {
       warning: warningLimit,
