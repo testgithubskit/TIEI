@@ -221,6 +221,19 @@ onBeforeMount(() => {
 const isInitialLoading = ref(true);
 const isParameterChanging = ref(false);
 
+// Top-level poll handle + flag so cleanup always runs even though onMounted is
+// async. Registering onBeforeUnmount after an await loses the component
+// instance context, so the hook must be registered synchronously below.
+let pollIntervalId = null;
+let isUnmounted = false;
+
+const stopPolling = () => {
+  if (pollIntervalId !== null) {
+    clearInterval(pollIntervalId);
+    pollIntervalId = null;
+  }
+};
+
 onMounted(async () => {
   setTimeout(() => {
     isInitialLoading.value = false;
@@ -234,20 +247,24 @@ onMounted(async () => {
     console.error('Page initialization failed:', error);
   }
 
+  // Component may have been unmounted while awaiting; don't start polling.
+  if (isUnmounted) {
+    return;
+  }
+
   if (factoryPollOverviewGridStore.SelectedParmeter && factoryPollOverviewGridStore.SelectedParmeter.item_name === 'CYCLE_TIME') {
     isCycleTimeSelected.value = true;
   }
 
-  let intervalId;
   if (!isCycleTimeSelected.value) {
     factoryPollOverviewGridStore.updateGroupData();
   } else {
     fetchCycleTimeData();
   }
 
-
-  // Set up the interval and store the ID
-  intervalId = setInterval(() => {
+  // Set up the interval and store the ID at top level for reliable cleanup.
+  stopPolling();
+  pollIntervalId = setInterval(() => {
     isLoading.value = true; // Set loading to true before fetching data
     // Only update group data if not CYCLE_TIME
     if (!isCycleTimeSelected.value) {
@@ -260,14 +277,12 @@ onMounted(async () => {
       isLoading.value = false; // Set loading to false after 1 second
     }, 1000);
   }, 5000);
+});
 
-  // Use onBeforeUnmount to clean up when the component is about to be unmounted
-  onBeforeUnmount(() => {
-    console.log("Clearing");
-    // Clear the interval when the component is unmounting
-    clearInterval(intervalId);
-  });
-  
+// Registered synchronously so it always fires when leaving the grid page.
+onBeforeUnmount(() => {
+  isUnmounted = true;
+  stopPolling();
 });
 
 
