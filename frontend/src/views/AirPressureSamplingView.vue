@@ -1034,7 +1034,7 @@ onMounted(async () => {
           <!-- ── GRAPH HEADER BAR ── -->
           <div class="mls-graph-head">
             <div class="mls-graph-head-left">
-              <h3 class="mls-graph-title">AIR PRESSURE COMPARISON</h3>
+              <h3 class="mls-graph-title">HONING MEASURING AIR PRESSURE</h3>
               <span class="mls-head-divider">|</span>
               <div class="mls-head-meta">
                 <div class="mls-breadcrumb-chips">

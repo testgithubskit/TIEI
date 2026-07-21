@@ -36,13 +36,15 @@ export const CONFIG = {
   // ── Initial Skeleton (machines per line before backend loads) ──
   // Used to render placeholder shimmering machines while API loads
   // Array index maps to line index: [line0, line1, line2, ...]
-  defaultLineMachines: [7, 14, 38],
+  // Display order is HEAD, CRANK, BLOCK.
+  defaultLineMachines: [38, 14, 7],
 
   // ── Hover Interaction ───────────────────────────────────
   hoverScale: 1.15,       // Scale factor on hover
 
   // ── View Fitting ────────────────────────────────────────
   viewPadding: 80,        // Padding around auto-fit bounding box (SVG units)
+  fitZoomMultiplier: 1.061, // Keep the fitted isometric view at ~89%
 
   // ── Machine Image Sizing & Anchoring ────────────────────
   machineWidth: 75,

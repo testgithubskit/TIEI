@@ -12,7 +12,7 @@
             <div class="flex items-center justify-between px-3 py-2 noc-header-top">
               <div class="flex items-center gap-2">
                 <span class="noc-live-dot"></span>
-                <span class="noc-title">FACTORY OVERVIEW</span>
+                <span class="noc-title">MANAGERIAL OVERVIEW</span>
               </div>
               <span class="noc-timestamp">{{ new Date().toLocaleTimeString('en-US', { hour12: false }) }}</span>
             </div>
@@ -408,6 +408,29 @@
               <div class="w-px h-4 mx-1" :style="{ background: svgColors.hudDivider }"></div>
               <button @click="resetZoom" class="px-2 py-1 rounded text-xs font-bold"
                       :style="{ background: svgColors.fitBg, color: svgColors.fitText }" title="Fit All Machines">Fit</button>
+              <div class="w-px h-4 mx-1" :style="{ background: svgColors.hudDivider }"></div>
+              <div
+                class="noc-state-legend"
+                :style="{ color: svgColors.hudText }"
+                aria-label="Machine state color legend"
+              >
+                <span class="noc-state-legend__item">
+                  <span class="noc-state-legend__swatch noc-state-legend__swatch--ok"></span>
+                  OK
+                </span>
+                <span class="noc-state-legend__item">
+                  <span class="noc-state-legend__swatch noc-state-legend__swatch--warning"></span>
+                  Warning
+                </span>
+                <span class="noc-state-legend__item">
+                  <span class="noc-state-legend__swatch noc-state-legend__swatch--critical"></span>
+                  Critical
+                </span>
+                <span class="noc-state-legend__item">
+                  <span class="noc-state-legend__swatch noc-state-legend__swatch--disconnected"></span>
+                  Disconnected
+                </span>
+              </div>
             </div>
 
             <!-- ── Theme Toggle Button ── -->
@@ -467,11 +490,22 @@
             <!-- Abnormal Parameter Cards Feed -->
             <div v-else class="space-y-3">
               <div class="text-[9px] font-black uppercase tracking-wider mb-2 noc-abnormalities-header">
-                ACTIVE ABNORMALITIES: {{ selectedMachineAlerts.length }} DETECTED
+                <template v-if="selectedMachine.is_combined_air_honing">
+                  AIR PRESSURE SIGNALS: {{ selectedMachineAlerts.length }}
+                </template>
+                <template v-else>
+                  ACTIVE ABNORMALITIES: {{ selectedMachineAlerts.length }} DETECTED
+                </template>
               </div>
               
-              <div v-for="param in selectedMachineAlerts" :key="param.actual_parameter_name" 
-                   @click="logParameterDetails(param, selectedMachine.machine_name, getParameterGroup(selectedMachine.machine_name, param.internal_parameter_name))"
+              <div
+                   v-for="param in selectedMachineAlerts"
+                   :key="`${param.source_machine_name || selectedMachine.machine_name}-${param.internal_parameter_name || param.actual_parameter_name}`"
+                   @click="logParameterDetails(
+                     param,
+                     param.source_machine_name || selectedMachine.machine_name,
+                     param.parameter_group || getParameterGroup(param.source_machine_name || selectedMachine.machine_name, param.internal_parameter_name)
+                   )"
                    class="noc-modal-param-card cursor-pointer flex flex-col border border-l-[5px] transition-all duration-150"
                    :class="'noc-param-card-' + param.parameter_state.toLowerCase()">
                 
@@ -481,7 +515,7 @@
                   <div class="flex-1 min-w-0 py-2 px-3 flex flex-col justify-between">
                     <!-- Row 1: Parameter Group Name -->
                     <span class="text-[12px] font-extrabold uppercase tracking-wide truncate font-mono noc-param-group-title">
-                      {{ param.parameter_group || getParameterGroup(selectedMachine.machine_name, param.internal_parameter_name) }}
+                      {{ param.signal_name || param.parameter_group || getParameterGroup(selectedMachine.machine_name, param.internal_parameter_name) }}
                     </span>
                     
                     <!-- Row 2: Left-aligned Raw Name, Right-aligned Parameter Limit Type Badge -->
@@ -596,15 +630,14 @@ const h = 3.5;
 const anchorY = CONFIG.machineHeight * (1 - CONFIG.machineAnchorYPercent);
 
 const getPlatformColors = (state) => {
-  const dark = panelTheme.value === 'dark';
   const mapping = {
     'OK': {
-      top: dark ? '#1e293b' : '#f8fafc',
-      sideLeft: dark ? '#0f172a' : '#cbd5e1',
-      sideRight: dark ? '#334155' : '#e2e8f0',
-      stroke: dark ? '#334155' : '#cbd5e1',
-      glow: 'transparent',
-      hasGlow: false
+      top: '#50C878',
+      sideLeft: '#278A52',
+      sideRight: '#3AAA67',
+      stroke: '#83DDA8',
+      glow: 'rgba(80, 200, 120, 0.28)',
+      hasGlow: true
     },
     'WARNING': {
       top: '#f59e0b',
@@ -623,11 +656,11 @@ const getPlatformColors = (state) => {
       hasGlow: true
     },
     'DISCONNECTED': {
-      top: '#3B3B3B',
-      sideLeft: '#2B2B2B',
-      sideRight: '#4B4B4B',
-      stroke: '#3B3B3B',
-      glow: 'rgba(59, 59, 59, 0.5)',
+      top: '#A1AEB1',
+      sideLeft: '#748286',
+      sideRight: '#89979B',
+      stroke: '#BEC7C9',
+      glow: 'rgba(161, 174, 177, 0.35)',
       hasGlow: true
     }
   };
@@ -751,9 +784,10 @@ const svgColors = computed(() => {
 });
 
 // ── Skeleton mock data (generated from defaultLineMachines config) ──
-const defaultLineNames = ['BLOCK', 'CRANK', 'HEAD'];
+const LINE_DISPLAY_ORDER = ['HEAD', 'CRANK', 'BLOCK'];
+const defaultLineNames = LINE_DISPLAY_ORDER;
 const skeletonLinesData = computed(() => {
-  const counts = CONFIG.defaultLineMachines || [7, 14, 38];
+  const counts = CONFIG.defaultLineMachines || [38, 14, 7];
   return counts.map((count, i) => ({
     name: defaultLineNames[i] || `LINE_${i + 1}`,
     counts: { OK: count, WARNING: 0, CRITICAL: 0, DISCONNECTED: 0 },
@@ -864,19 +898,74 @@ const fitView = () => {
   const ar = 1200 / 800;
   let fitW, fitH;
   if (bw / bh > ar) { fitW = bw; fitH = bw / ar; } else { fitH = bh; fitW = bh * ar; }
+  const fitZoomMultiplier = CONFIG.fitZoomMultiplier || 1;
+  fitW /= fitZoomMultiplier;
+  fitH /= fitZoomMultiplier;
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   viewBoxX.value = cx - fitW / 2; viewBoxY.value = cy - fitH / 2;
   viewBoxW.value = fitW; viewBoxH.value = fitH; zoomScale.value = 1200 / fitW;
 };
 
 // ── Data mapping ──
+const AIR_HONING_SIGNAL_NAMES = new Set(['2nd Rough', '4th Finish']);
+const MACHINE_STATE_PRIORITY = {
+  OK: 0,
+  DISCONNECTED: 1,
+  WARNING: 2,
+  CRITICAL: 3,
+};
+
+function combineAirHoningSignals(rawMachines, lineName) {
+  const machines = rawMachines || [];
+  const signalMachines = machines.filter((machine) => (
+    AIR_HONING_SIGNAL_NAMES.has(machine.machine_name)
+    || machine.is_pressure_machine === true
+  ));
+
+  if (signalMachines.length <= 1) {
+    return machines.map((machine) => ({ ...machine, lineName }));
+  }
+
+  const firstSignalIndex = machines.findIndex((machine) => signalMachines.includes(machine));
+  const parameters = signalMachines.flatMap((machine) => (
+    (machine.parameters || []).map((parameter) => ({
+      ...parameter,
+      source_machine_name: machine.machine_name,
+      signal_name: machine.machine_name,
+      is_pressure_machine: true,
+    }))
+  ));
+  const machineState = signalMachines.reduce((highestState, machine) => {
+    const candidate = machine.machine_state || 'OK';
+    return (MACHINE_STATE_PRIORITY[candidate] || 0) > (MACHINE_STATE_PRIORITY[highestState] || 0)
+      ? candidate
+      : highestState;
+  }, 'OK');
+  const combinedMachine = {
+    machine_name: 'Air Honing',
+    machine_state: machineState,
+    lineName,
+    parameters,
+    is_pressure_machine: true,
+    is_combined_air_honing: true,
+  };
+
+  const physicalMachines = machines
+    .filter((machine) => !signalMachines.includes(machine))
+    .map((machine) => ({ ...machine, lineName }));
+  physicalMachines.splice(Math.max(0, firstSignalIndex), 0, combinedMachine);
+  return physicalMachines;
+}
+
 const uiLinesData = computed(() => {
   const rawLines = factoryStore.formattedOverviewData?.lines || [];
   if (rawLines.length === 0) return skeletonLinesData.value;
 
+  const linePriority = new Map(LINE_DISPLAY_ORDER.map((name, index) => [name, index]));
+
   return rawLines.map(line => {
     const name = line.line_name;
-    const machines = (line.machines || []).map(m => ({ ...m, lineName: name }));
+    const machines = combineAirHoningSignals(line.machines || [], name);
     const counts = { OK: 0, WARNING: 0, CRITICAL: 0, DISCONNECTED: 0 };
     machines.forEach(m => {
       const s = m.machine_state || 'OK';
@@ -891,6 +980,10 @@ const uiLinesData = computed(() => {
       });
     });
     return { name, counts, machines, alerts };
+  }).sort((a, b) => {
+    const aPriority = linePriority.get(String(a.name).toUpperCase()) ?? Number.MAX_SAFE_INTEGER;
+    const bPriority = linePriority.get(String(b.name).toUpperCase()) ?? Number.MAX_SAFE_INTEGER;
+    return aPriority - bPriority;
   });
 });
 
@@ -914,7 +1007,7 @@ const allAlerts = computed(() => {
       (m.parameters || []).forEach(p => {
         if (p.parameter_state === 'WARNING' || p.parameter_state === 'CRITICAL') {
           alerts.push({
-            machineName: m.machine_name,
+            machineName: p.source_machine_name || m.machine_name,
             lineName: m.lineName || line.name,
             group: p.parameter_group || 'Unknown Group',
             // Pressure machines have no axis — never fall back to AIR_PRESSURE / AP
@@ -1146,11 +1239,17 @@ function getMachineIconHeight(machine) {
 }
 
 function getMachineIconX(machine) {
-  return getMachineX(machine) + (CONFIG.machineWidth - getMachineIconWidth(machine)) / 2;
+  const honingOffset = isAirHoningMachine(machine) ? (CONFIG.honingIconOffsetX || 0) : 0;
+  return getMachineX(machine)
+    + (CONFIG.machineWidth - getMachineIconWidth(machine)) / 2
+    + honingOffset;
 }
 
 function getMachineIconY(machine) {
-  return getMachineY(machine) + (CONFIG.machineHeight - getMachineIconHeight(machine)) / 2;
+  const honingOffset = isAirHoningMachine(machine) ? (CONFIG.honingIconOffsetY || 0) : 0;
+  return getMachineY(machine)
+    + (CONFIG.machineHeight - getMachineIconHeight(machine)) / 2
+    + honingOffset;
 }
 
 function isAirHoningMachine(machine) {
@@ -1183,10 +1282,18 @@ function getAbnormalParameters(machine) {
 // ── Modal computed ──
 const selectedMachineAlerts = computed(() => {
   if (!selectedMachine.value) return [];
+  if (selectedMachine.value.is_combined_air_honing) {
+    return selectedMachine.value.parameters || [];
+  }
   return (selectedMachine.value.parameters || []).filter(p => p.parameter_state !== 'OK');
 });
 
 function showMachineDetails(machine) {
+  if (machine.is_combined_air_honing) {
+    selectedMachine.value = machine;
+    return;
+  }
+
   const pressureParam = machine.is_pressure_machine
     ? machine.parameters?.[0]
     : machine.parameters?.find((param) => param.is_pressure_machine);
@@ -2104,7 +2211,15 @@ onMounted(async () => {
   background: rgba(255, 255, 255, 0.01);
 }
 
-/* Dynamic State colors (Amber & Red) for cards in Dark mode */
+/* Dynamic state colors for cards in Dark mode */
+.noc-dark-modal .noc-param-card-ok {
+  border-color: #475569 !important;
+  border-left-color: #10b981 !important;
+}
+.noc-dark-modal .noc-param-card-ok:hover {
+  background: rgba(16, 185, 129, 0.04) !important;
+  border-color: #10b981 !important;
+}
 .noc-dark-modal .noc-param-card-warning {
   border-color: #475569 !important;
   border-left-color: #f59e0b !important;
@@ -2285,7 +2400,15 @@ onMounted(async () => {
   background: rgba(0, 0, 0, 0.01);
 }
 
-/* Dynamic State colors (Amber & Red) for cards in Light mode */
+/* Dynamic state colors for cards in Light mode */
+.noc-light-modal .noc-param-card-ok {
+  border-color: #cbd5e1 !important;
+  border-left-color: #059669 !important;
+}
+.noc-light-modal .noc-param-card-ok:hover {
+  background: rgba(16, 185, 129, 0.05) !important;
+  border-color: #059669 !important;
+}
 .noc-light-modal .noc-param-card-warning {
   border-color: #cbd5e1 !important;
   border-left-color: #d97706 !important;
@@ -2507,6 +2630,53 @@ onMounted(async () => {
 .noc-plant-toggle-light .noc-plant-toggle-btn:not(.is-active):hover {
   color: #475569;
   background: rgba(226, 232, 240, 0.8);
+}
+
+/* Machine-state legend beside the zoom/Fit controls */
+.noc-state-legend {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  user-select: none;
+}
+
+.noc-state-legend__item {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.noc-state-legend__swatch {
+  width: 11px;
+  height: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.4);
+  border-radius: 2px;
+  box-shadow: 0 0 5px currentColor;
+}
+
+.noc-state-legend__swatch--ok {
+  color: #50C878;
+  background: #50C878;
+}
+
+.noc-state-legend__swatch--warning {
+  color: #f59e0b;
+  background: #f59e0b;
+}
+
+.noc-state-legend__swatch--critical {
+  color: #ef4444;
+  background: #ef4444;
+}
+
+.noc-state-legend__swatch--disconnected {
+  color: #A1AEB1;
+  background: #A1AEB1;
 }
 
 /* Glowing Plant Badge (kept for compatibility) */
