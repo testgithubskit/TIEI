@@ -21,6 +21,10 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  isCombinedAirHoning: {
+    type: Boolean,
+    default: false,
+  },
   borderSide: {
     type: String,
     default: "s",
@@ -37,6 +41,9 @@ function isPressureParameter(parameter) {
 }
 
 const isPressureMachineCard = computed(() => {
+  if (props.isCombinedAirHoning === true) {
+    return false;
+  }
   if (props.isPressureMachine === true) {
     return true;
   }
@@ -44,6 +51,22 @@ const isPressureMachineCard = computed(() => {
     return true;
   }
   return props.parameters?.some((parameter) => isPressureParameter(parameter));
+});
+
+const airHoningSignals = computed(() => {
+  if (!props.isCombinedAirHoning) {
+    return [];
+  }
+
+  const seen = new Set();
+  return (props.parameters || []).filter((parameter) => {
+    const signalName = parameter.signal_name || parameter.source_machine_name || parameter.display_name;
+    if (!signalName || seen.has(signalName)) {
+      return false;
+    }
+    seen.add(signalName);
+    return true;
+  });
 });
 
 const pressureParameter = computed(() => {
@@ -67,6 +90,9 @@ const borderClass = computed(() => {
 });
 
 const machineWidth = computed(() => {
+  if (props.isCombinedAirHoning) {
+    return 'air-honing-machine-card';
+  }
   if (isPressureMachineCard.value) {
     return 'pressure-machine-card';
   }
@@ -85,14 +111,32 @@ const emit = defineEmits(['machine-parameter-clicked']);
 const handleMachineParameterClick = (clickedParameter) => {
   const matchedParameter = props.parameters.find(
     (parameter) => parameter.actual_parameter_name === clickedParameter.actualParameterName
+      || parameter.signal_name === clickedParameter.actualParameterName
+      || parameter.source_machine_name === clickedParameter.actualParameterName
   );
+  const sourceMachineName = matchedParameter?.source_machine_name
+    || matchedParameter?.signal_name
+    || props.machineName;
+
   emit('machine-parameter-clicked', {
     ...clickedParameter,
-    machineName: props.machineName,
-    displayName: matchedParameter?.display_name,
+    machineName: sourceMachineName,
+    displayName: matchedParameter?.display_name || matchedParameter?.signal_name || '',
     latest_update_time: matchedParameter?.latest_update_time,
     latest_update_time_ms: matchedParameter?.latest_update_time_ms,
-    is_pressure_machine: isPressureParameter(matchedParameter),
+    is_pressure_machine: props.isCombinedAirHoning || isPressureParameter(matchedParameter),
+  });
+};
+
+const handleAirHoningSignalClick = (parameter) => {
+  emit('machine-parameter-clicked', {
+    actualParameterName: 'AIR_PRESSURE',
+    internalParameterName: parameter?.internal_parameter_name,
+    machineName: parameter?.source_machine_name || parameter?.signal_name || props.machineName,
+    displayName: parameter?.signal_name || parameter?.display_name || '',
+    latest_update_time: parameter?.latest_update_time,
+    latest_update_time_ms: parameter?.latest_update_time_ms,
+    is_pressure_machine: true,
   });
 };
 
@@ -111,6 +155,15 @@ const handlePressureMachineClick = () => {
 };
 
 const handleCardClick = () => {
+  if (props.isCombinedAirHoning) {
+    const preferred = airHoningSignals.value.find((parameter) => (
+      parameter.parameter_state === 'CRITICAL' || parameter.parameter_state === 'WARNING'
+    )) || airHoningSignals.value[0] || pressureParameter.value;
+    if (preferred) {
+      handleAirHoningSignalClick(preferred);
+    }
+    return;
+  }
   if (isPressureMachineCard.value) {
     handlePressureMachineClick();
   }
@@ -120,7 +173,7 @@ const handleCardClick = () => {
 
 <template>
   <div
-    :class="[machineWidth, borderClass, 'flex flex-col mx-0', { 'cursor-pointer': isPressureMachineCard }]"
+    :class="[machineWidth, borderClass, 'flex flex-col mx-0', { 'cursor-pointer': isPressureMachineCard || isCombinedAirHoning }]"
     @click="handleCardClick"
   >
     <div
@@ -129,7 +182,25 @@ const handleCardClick = () => {
     >
       {{ props.machineName }}
     </div>
-    <div v-if="!isPressureMachineCard" class="flex flex-wrap justify-start">
+    <div v-if="isCombinedAirHoning" class="grid grid-cols-2 gap-1 p-1" @click.stop>
+      <button
+        v-for="parameter in airHoningSignals"
+        :key="parameter.signal_name || parameter.internal_parameter_name"
+        type="button"
+        class="air-honing-signal-chip text-white text-[11px] font-semibold px-2 rounded"
+        :class="{
+          'bg-emerald-600': (parameter.parameter_state || machineState) === 'OK',
+          'bg-yellow-600': (parameter.parameter_state || machineState) === 'WARNING',
+          'bg-red-600': (parameter.parameter_state || machineState) === 'CRITICAL',
+          'bg-slate-500': (parameter.parameter_state || machineState) === 'DISCONNECTED',
+        }"
+        :title="parameter.signal_name || parameter.display_name"
+        @click="handleAirHoningSignalClick(parameter)"
+      >
+        {{ parameter.signal_name || parameter.display_name }}
+      </button>
+    </div>
+    <div v-else-if="!isPressureMachineCard" class="flex flex-wrap justify-start">
       <MachineParameter
         v-for="parameter in props.parameters"
         :key="parameter.internal_parameter_name"
@@ -153,7 +224,20 @@ const handleCardClick = () => {
   min-width: 14rem;
 }
 
+.air-honing-machine-card {
+  width: 16rem;
+  min-width: 16rem;
+}
+
 .pressure-machine-card__body {
   min-height: 2.5rem;
+}
+
+.air-honing-signal-chip {
+  width: 100%;
+  min-width: 0;
+  height: 2rem;
+  line-height: 1.1;
+  white-space: nowrap;
 }
 </style>

@@ -33,6 +33,7 @@ import { useRouter } from 'vue-router';
 import { Tooltip } from 'ant-design-vue';
 import { RightCircleOutlined } from '@ant-design/icons-vue'; // Change this line
 import { useDatabaseName } from '@/stores/DatabaseName';
+import { combineAirHoningSignals, recountMachineStates } from '@/services/airHoningUtils';
 
 const router = useRouter();
 const route = useRoute();
@@ -55,7 +56,31 @@ let groupDataIndex = computed(() => {
 let isLoading = ref(false);
 
 let selectedParameterGroupInfo = computed(() => {
-  return factoryPollOverviewGridStore.groupData[groupDataIndex.value];
+  const group = factoryPollOverviewGridStore.groupData[groupDataIndex.value];
+  if (!group) {
+    return group;
+  }
+
+  const groupDetails = (group.group_details || []).map((line) => {
+    const machines = combineAirHoningSignals(line.machines || []);
+    return {
+      ...line,
+      machines,
+      count: recountMachineStates(machines),
+    };
+  });
+
+  return {
+    ...group,
+    group_details: groupDetails,
+    count: groupDetails.reduce((totals, line) => {
+      totals.OK += line.count.OK || 0;
+      totals.WARNING += line.count.WARNING || 0;
+      totals.CRITICAL += line.count.CRITICAL || 0;
+      totals.DISCONNECTED += line.count.DISCONNECTED || 0;
+      return totals;
+    }, { OK: 0, WARNING: 0, CRITICAL: 0, DISCONNECTED: 0 }),
+  };
 });
 
 const groupCount = computed(() => {
@@ -81,11 +106,9 @@ const groupCount = computed(() => {
     };
   }
 
-  // For other parameters, use the store data
-  const selectedGroup = factoryPollOverviewGridStore.groupData.find(group => group.group_name === factoryPollOverviewGridStore.SelectedParmeter.item_name);
-
-  if (selectedGroup) {
-    return selectedGroup.count;
+  // For other parameters, use the combined Air Honing–aware group data
+  if (selectedParameterGroupInfo.value?.count) {
+    return selectedParameterGroupInfo.value.count;
   }
 
   // Default count if the group is not found

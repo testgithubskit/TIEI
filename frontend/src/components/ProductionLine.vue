@@ -1,6 +1,7 @@
 <script setup>
 import { computed } from 'vue';
 import MachineWithParameters from "@/components/MachineWithParameters.vue";
+import { combineAirHoningSignals, recountMachineStates } from '@/services/airHoningUtils';
 
 const props = defineProps({
   lineName: {
@@ -43,13 +44,9 @@ const bgColor = computed(() => {
 });
 
 const displayMachines = computed(() => {
-  const isPressureMachine = (machine) => (
-    machine.is_pressure_machine === true
-    || machine.machine_name === '2nd Rough'
-    || machine.machine_name === '4th Finish'
-  );
-  const pressureMachines = props.machines.filter((machine) => isPressureMachine(machine));
-  const otherMachines = props.machines.filter((machine) => !isPressureMachine(machine));
+  const combined = combineAirHoningSignals(props.machines || []);
+  const pressureMachines = combined.filter((machine) => machine.is_pressure_machine === true || machine.is_combined_air_honing === true);
+  const otherMachines = combined.filter((machine) => !(machine.is_pressure_machine === true || machine.is_combined_air_honing === true));
 
   if (props.highlightPressureMachines && props.lineName === 'BLOCK') {
     return pressureMachines;
@@ -57,6 +54,8 @@ const displayMachines = computed(() => {
 
   return [...pressureMachines, ...otherMachines];
 });
+
+const displayCount = computed(() => recountMachineStates(displayMachines.value));
 
 const emit = defineEmits(['machine-parameter-clicked']);
 
@@ -70,12 +69,12 @@ const handleMachineParameterClick = (clickedParameter) => {
   <div :class="borderClass" class="flex flex-col mb-4 pb-4">
     <div :class="[bgColor, 'p-4 rounded-t-lg text-white text-center h-30 flex items-center font-bold justify-center mb-4']">
       <span>LINE: {{ lineName }}</span>
-      <span class="ml-2">Total: {{ count.OK + count.WARNING + count.CRITICAL +  count.DISCONNECTED }}</span>
+      <span class="ml-2">Total: {{ displayCount.OK + displayCount.WARNING + displayCount.CRITICAL + displayCount.DISCONNECTED }}</span>
       <div class="flex items-center ml-4">
-        <span class="mr-2">OK: {{ count.OK }}</span>
-        <span class="mr-2">WARNING: {{ count.WARNING }}</span>
-        <span class="mr-2">CRITICAL: {{ count.CRITICAL }}</span>
-        <span>DISCONNECTED: {{ count.DISCONNECTED }}</span>
+        <span class="mr-2">OK: {{ displayCount.OK }}</span>
+        <span class="mr-2">WARNING: {{ displayCount.WARNING }}</span>
+        <span class="mr-2">CRITICAL: {{ displayCount.CRITICAL }}</span>
+        <span>DISCONNECTED: {{ displayCount.DISCONNECTED }}</span>
       </div>
     </div>
     <div class="flex flex-wrap justify-start gap-4 px-4">
@@ -85,7 +84,8 @@ const handleMachineParameterClick = (clickedParameter) => {
         :machineName="machine.machine_name"
         :machineState="machine.machine_state"
         :parameters="machine.parameters"
-        :isPressureMachine="machine.is_pressure_machine === true || machine.machine_name === '2nd Rough' || machine.machine_name === '4th Finish'"
+        :isPressureMachine="machine.is_pressure_machine === true || machine.is_combined_air_honing === true"
+        :isCombinedAirHoning="machine.is_combined_air_honing === true"
         @machine-parameter-clicked="handleMachineParameterClick"
       />
     </div>
