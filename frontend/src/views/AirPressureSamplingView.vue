@@ -34,6 +34,7 @@ const lineName = computed(() => (
 
 const isPressureLogListLoading = ref(false);
 const isPressureGraphLoading = ref(false);
+const MAX_PRESSURE_LOG_SELECTIONS = 5;
 const isUpdatingPressureBaseline = ref(false);
 
 // Show/Hide baseline series on graph
@@ -311,7 +312,7 @@ async function loadPressureLogFiles({ refreshGraph = true } = {}) {
     const validIds = new Set((response.log_files || []).map((item) => item.log_file_id));
     machineSamplingWithLimitsStore.selectedPressureLogFileIds = selectedPressureLogFileIds.value
       .filter((id) => validIds.has(id))
-      .slice(0, 3);
+      .slice(0, MAX_PRESSURE_LOG_SELECTIONS);
     if (refreshGraph) {
       await refreshPressureComparisonGraph();
     }
@@ -336,9 +337,9 @@ async function handlePressureLogSelection(logFileId, checked) {
     if (currentIds.includes(logFileId)) {
       return;
     }
-    if (currentIds.length >= 3) {
+    if (currentIds.length >= MAX_PRESSURE_LOG_SELECTIONS) {
       Toastify({
-        text: 'Maximum of 3 runs can be selected for preview.',
+        text: `Maximum of ${MAX_PRESSURE_LOG_SELECTIONS} runs can be selected for preview.`,
         duration: 3500,
         close: true,
         gravity: 'top',
@@ -359,9 +360,9 @@ async function handlePressureLogSelection(logFileId, checked) {
 
 function handleRowClick(logFileId) {
   const isSelected = selectedPressureLogFileIds.value.includes(logFileId);
-  if (!isSelected && selectedPressureLogFileIds.value.length >= 3) {
+  if (!isSelected && selectedPressureLogFileIds.value.length >= MAX_PRESSURE_LOG_SELECTIONS) {
     Toastify({
-      text: 'Maximum of 3 runs can be selected for preview.',
+      text: `Maximum of ${MAX_PRESSURE_LOG_SELECTIONS} runs can be selected for preview.`,
       duration: 3500,
       close: true,
       gravity: 'top',
@@ -377,7 +378,9 @@ function selectAllPressureSelections() {
   if (!displayPressureLogFiles.value.length) {
     return;
   }
-  const maxToSelect = displayPressureLogFiles.value.slice(0, 3).map((item) => item.log_file_id);
+  const maxToSelect = displayPressureLogFiles.value
+    .slice(0, MAX_PRESSURE_LOG_SELECTIONS)
+    .map((item) => item.log_file_id);
   machineSamplingWithLimitsStore.selectedPressureLogFileIds = maxToSelect;
   refreshPressureComparisonGraph();
 }
@@ -904,7 +907,7 @@ onMounted(async () => {
           <div class="mls-table-control-bar">
             <span class="mls-table-control-title">
               TIMESTAMPS LIST
-              <span class="mls-select-count-badge">({{ selectedPressureLogFileIds.length }}/3)</span>
+              <span class="mls-select-count-badge">({{ selectedPressureLogFileIds.length }}/{{ MAX_PRESSURE_LOG_SELECTIONS }})</span>
             </span>
             <div class="mls-table-control-actions">
               <button
@@ -980,7 +983,7 @@ onMounted(async () => {
                 <div class="mls-td mls-td-chk" @click.stop>
                   <input
                     :checked="selectedPressureLogFileIds.includes(row.log_file_id)"
-                    :disabled="!selectedPressureLogFileIds.includes(row.log_file_id) && selectedPressureLogFileIds.length >= 3"
+                    :disabled="!selectedPressureLogFileIds.includes(row.log_file_id) && selectedPressureLogFileIds.length >= MAX_PRESSURE_LOG_SELECTIONS"
                     type="checkbox"
                     class="mls-checkbox"
                     @change="handlePressureLogSelection(row.log_file_id, $event.target.checked)"

@@ -221,7 +221,7 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
 
       const url = `/pressure/machines/${encodeURIComponent(this.machine)}/air-pressure?startTime=${encodeURIComponent(
         this.selectedDates.from
-      )}&endTime=${encodeURIComponent(this.selectedDates.to)}&maxPoints=1500`;
+      )}&endTime=${encodeURIComponent(this.selectedDates.to)}&maxPoints=3000`;
 
       try {
         const response = await backendApi.get(url);
@@ -270,7 +270,7 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         query.set('logFileIds', logFileIds.join(','));
       }
       query.set('includeBaseline', includeBaseline ? 'true' : 'false');
-      query.set('maxPoints', '800');
+      query.set('maxPoints', '3000');
 
       const url = `/pressure/machines/${encodeURIComponent(this.machine)}/air-pressure-log-files?${query.toString()}`;
 

@@ -85,8 +85,8 @@ PRESSURE_DISPLAY_NAME = "Air Pressure"
 PRESSURE_LINE_NAME = "BLOCK"
 PRESSURE_MIN_RANGE_SECONDS = 1
 PRESSURE_MAX_RANGE_SECONDS = 365 * 24 * 3600  # up to 1 year
-PRESSURE_MAX_CHART_POINTS = 2000
-PRESSURE_DEFAULT_CHART_POINTS = 1500
+PRESSURE_MAX_CHART_POINTS = 3000
+PRESSURE_DEFAULT_CHART_POINTS = 3000
 PRESSURE_DB_TIMEZONE = pytz.timezone('Asia/Kolkata')
 # Sensor reading time column (not created_at — that is ingest time and identical per batch).
 PRESSURE_SENSOR_TIME_COL = '"timestamp"'
@@ -685,8 +685,8 @@ def _fetch_pressure_points_for_log_file(machine_id, log_file_id, max_points):
     - dense files: SQL width_bucket AVG, then LTTB
     """
     max_points = _clamp_pressure_max_points(max_points)
-    # Keep comparison charts visually clean (ref-style), especially for dense short runs.
-    visual_max = min(max_points, 800)
+    # Honor the requested resolution for comparison charts (up to the clamp ceiling).
+    visual_max = max_points
     time_col = PRESSURE_SENSOR_TIME_COL
     mid = int(machine_id)
     lid = int(log_file_id)
@@ -880,8 +880,8 @@ def get_pressure_machine_timeline_by_log_files(machine_name, log_file_ids, max_p
         except (TypeError, ValueError):
             continue
 
-    if len(requested_ids) > 3:
-        raise ValueError("A maximum of 3 pressure log files can be selected at a time")
+    if len(requested_ids) > 5:
+        raise ValueError("A maximum of 5 pressure log files can be selected at a time")
 
     listing = get_pressure_log_file_listing(machine_name_db)
     log_files_by_id = {item["log_file_id"]: item for item in listing["log_files"]}

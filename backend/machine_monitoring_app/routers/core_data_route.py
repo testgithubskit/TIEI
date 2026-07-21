@@ -1825,9 +1825,9 @@ async def read_pressure_machine_air_pressure(
         example="2026-06-30 16:08:06",
     ),
     maxPoints: int = Query(
-        1500,
+        3000,
         ge=50,
-        le=2000,
+        le=3000,
         description="Max points returned after downsampling (LTTB / time buckets).",
     ),
 ):
@@ -1930,7 +1930,7 @@ async def read_pressure_machine_air_pressure_log_files(
     machineName: str,
     logFileIds: str = Query(
         "",
-        description="Comma-separated pressure_log_file ids selected by the user. Maximum 3.",
+        description="Comma-separated pressure_log_file ids selected by the user. Maximum 5.",
         example="1,2,3",
     ),
     includeBaseline: bool = Query(
@@ -1938,9 +1938,9 @@ async def read_pressure_machine_air_pressure_log_files(
         description="When true, include the currently configured baseline log file automatically.",
     ),
     maxPoints: int = Query(
-        1500,
+        3000,
         ge=50,
-        le=2000,
+        le=3000,
         description="Max points returned per selected log file after downsampling.",
     ),
 ):
