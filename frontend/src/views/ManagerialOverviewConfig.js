@@ -45,6 +45,7 @@ export const CONFIG = {
   // ── View Fitting ────────────────────────────────────────
   viewPadding: 80,        // Padding around auto-fit bounding box (SVG units)
   fitZoomMultiplier: 1.061, // Keep the fitted isometric view at ~89%
+  minFitZoom: 0.85,       // Never let the fitted view drop below 85%
 
   // ── Machine Image Sizing & Anchoring ────────────────────
   machineWidth: 75,
@@ -54,15 +55,19 @@ export const CONFIG = {
   honingIconScale: 1.15,
 
   // ── Coordinate Offsets ──────────────────────────────────
-  machineGridUOffset: 0.5,
+  // Move all machines one more grid line backward so headings stay fully visible.
+  machineGridUOffset: -1.5,
   machineGridVOffset: 0.5,
   machinePixelOffsetX: 0,
   machinePixelOffsetY: 0,
+  // Keep production-line headings aligned with the same one-grid shift.
+  lineLabelGridUOffset: -2,
 
   // ── State Color Filters (CSS filter applied to machine SVG) ──
   useFilters: true,
   stateFilters: {
-    OK: '',
+    // Light green tint applies only to the machine artwork; platforms stay neutral.
+    OK: 'sepia(0.30) saturate(1.45) hue-rotate(75deg) brightness(1.04)',
 
     WARNING: 'sepia(0.25) saturate(1.4) hue-rotate(0deg) brightness(1.02)',
 

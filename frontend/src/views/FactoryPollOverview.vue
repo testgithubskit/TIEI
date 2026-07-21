@@ -165,7 +165,12 @@ const getLineCount = (line, state) => {
 };
 
 
-onBeforeMount(async () => {
+// Shared init promise so onMounted can wait for the real group selection.
+// Without this, onMounted fires the first fetch while SelectedParmeter is still
+// the store placeholder, causing a spurious request for a non-existent group.
+let pageInitPromise = null;
+
+const initializePage = async () => {
   isPageLoading.value = true;
   let groupNameFromRoute = router.currentRoute.value.params.groupName || null;
   await factoryPollOverviewGridStore.fetchInitialPageData();
@@ -184,6 +189,10 @@ onBeforeMount(async () => {
     let selectedGroupDetails = {"label": informalGroupName, "state": groupDetails.groupState, "value": defaultGroupName};
     initialSelectedParameter.value = selectedGroupDetails;
   }
+};
+
+onBeforeMount(() => {
+  pageInitPromise = initializePage();
 });
 
 const isInitialLoading = ref(true);
@@ -193,6 +202,14 @@ onMounted(async () => {
   setTimeout(() => {
     isInitialLoading.value = false;
   }, 5000);
+
+  // Wait for the real group selection before the first fetch to avoid
+  // requesting the placeholder group (e.g. Group-661).
+  try {
+    await pageInitPromise;
+  } catch (error) {
+    console.error('Page initialization failed:', error);
+  }
 
   if (factoryPollOverviewGridStore.SelectedParmeter && factoryPollOverviewGridStore.SelectedParmeter.item_name === 'CYCLE_TIME') {
     isCycleTimeSelected.value = true;

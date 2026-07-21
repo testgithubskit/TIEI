@@ -219,6 +219,17 @@
               <span class="text-[9.5px] font-extrabold tracking-wider uppercase font-mono" :style="{ color: svgColors.hudText }">
                 <span class="text-[12px] font-black mr-1" :class="panelTheme === 'dark' ? 'text-white' : 'text-slate-900'">{{ totalMachines }}</span> Machines Connected
               </span>
+              <span
+                v-if="isRefreshing"
+                class="ml-1 pl-2 border-l flex items-center gap-1.5 text-[8.5px] font-bold uppercase tracking-wider"
+                :style="{ color: svgColors.hudText, borderColor: svgColors.hudBorder }"
+              >
+                <svg class="animate-spin h-3 w-3 text-sky-500" viewBox="0 0 24 24" fill="none">
+                  <circle class="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" stroke-width="3"></circle>
+                  <path class="opacity-80" fill="currentColor" d="M21 12a9 9 0 00-9-9v3a6 6 0 016 6h3z"></path>
+                </svg>
+                Updating
+              </span>
             </div>
             
             <!-- Glassmorphic Loading HUD overlaying the active machine layout -->
@@ -415,10 +426,6 @@
                 aria-label="Machine state color legend"
               >
                 <span class="noc-state-legend__item">
-                  <span class="noc-state-legend__swatch noc-state-legend__swatch--ok"></span>
-                  OK
-                </span>
-                <span class="noc-state-legend__item">
                   <span class="noc-state-legend__swatch noc-state-legend__swatch--warning"></span>
                   Warning
                 </span>
@@ -602,7 +609,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed, nextTick, onBeforeMount } from 'vue';
+import { ref, onMounted, computed, nextTick, onBeforeMount, onBeforeUnmount } from 'vue';
 import { useRouter } from 'vue-router';
 
 // LAYOUT & APIS
@@ -630,14 +637,15 @@ const h = 3.5;
 const anchorY = CONFIG.machineHeight * (1 - CONFIG.machineAnchorYPercent);
 
 const getPlatformColors = (state) => {
+  const dark = panelTheme.value === 'dark';
   const mapping = {
     'OK': {
-      top: '#50C878',
-      sideLeft: '#278A52',
-      sideRight: '#3AAA67',
-      stroke: '#83DDA8',
-      glow: 'rgba(80, 200, 120, 0.28)',
-      hasGlow: true
+      top: dark ? '#1e293b' : '#f8fafc',
+      sideLeft: dark ? '#0f172a' : '#cbd5e1',
+      sideRight: dark ? '#334155' : '#e2e8f0',
+      stroke: dark ? '#334155' : '#cbd5e1',
+      glow: 'transparent',
+      hasGlow: false
     },
     'WARNING': {
       top: '#f59e0b',
@@ -699,14 +707,9 @@ const getBeaconColors = (state) => {
 };
 
 const getMachineFilter = (state) => {
-  if (state === 'WARNING') {
-    return 'sepia(0.25) saturate(1.4) hue-rotate(0deg) brightness(1.02)';
-  } else if (state === 'CRITICAL') {
-    return 'sepia(0.35) saturate(1.8) hue-rotate(320deg) brightness(0.94)';
-  } else if (state === 'DISCONNECTED') {
-    return 'grayscale(0.85) contrast(0.80) saturate(0.1)';
-  }
-  return 'none';
+  return CONFIG.stateFilters?.[state]
+    || CONFIG.stateFilters?.UNKNOWN
+    || 'none';
 };
 
 const getStatusColor = (state) => {
@@ -755,7 +758,13 @@ const svgRef = ref(null);
 const activeLine = ref(null);
 const selectedMachine = ref(null);
 const hoveredMachine = ref(null);
-const isLoading = ref(true);
+const hasCachedFactoryData = () => (
+  (factoryStore.formattedOverviewData?.lines?.length || 0) > 0
+);
+const isLoading = ref(!hasCachedFactoryData());
+const isRefreshing = computed(() => factoryStore.isLoading && !isLoading.value);
+const FACTORY_REFRESH_INTERVAL_MS = 5000;
+let factoryRefreshTimer = null;
 
 // ── Theme (dark / light) ──
 const panelTheme = ref('dark');
@@ -892,6 +901,22 @@ const fitView = () => {
     minX = Math.min(minX, x); minY = Math.min(minY, y);
     maxX = Math.max(maxX, x + CONFIG.machineWidth); maxY = Math.max(maxY, y + CONFIG.machineHeight);
   });
+  // Include heading box corners so labels like BLOCK are never clipped by Fit.
+  lineLabels.value.forEach((label) => {
+    const corners = [
+      [label.u - label.halfWidth, label.v - label.halfHeight],
+      [label.u + label.halfWidth, label.v - label.halfHeight],
+      [label.u + label.halfWidth, label.v + label.halfHeight],
+      [label.u - label.halfWidth, label.v + label.halfHeight],
+    ];
+    corners.forEach(([u, v]) => {
+      const point = isoToScreen(u, v);
+      minX = Math.min(minX, point.x);
+      minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x);
+      maxY = Math.max(maxY, point.y);
+    });
+  });
   const pad = CONFIG.viewPadding || 80;
   minX -= pad; minY -= pad; maxX += pad; maxY += pad;
   const bw = maxX - minX, bh = maxY - minY;
@@ -901,6 +926,11 @@ const fitView = () => {
   const fitZoomMultiplier = CONFIG.fitZoomMultiplier || 1;
   fitW /= fitZoomMultiplier;
   fitH /= fitZoomMultiplier;
+  const minFitZoom = CONFIG.minFitZoom || 0;
+  if (minFitZoom > 0 && 1200 / fitW < minFitZoom) {
+    fitW = 1200 / minFitZoom;
+    fitH = 800 / minFitZoom;
+  }
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   viewBoxX.value = cx - fitW / 2; viewBoxY.value = cy - fitH / 2;
   viewBoxW.value = fitW; viewBoxH.value = fitH; zoomScale.value = 1200 / fitW;
@@ -1099,7 +1129,9 @@ const lineLabels = computed(() => {
     const configForLine = lineSettings[nameKey] || {};
 
     // Center of the U span
-    let uCenter = currentU + (rows * spacing) / 2;
+    let uCenter = currentU
+      + (rows * spacing) / 2
+      + (CONFIG.lineLabelGridUOffset || 0);
     // Place right above the boundary line (v = 0)
     let vCenter = -0.22;
 
@@ -1403,28 +1435,46 @@ function getParameterGroup(machineName, parameterName) {
 }
 
 // ── Lifecycle ──
+const refreshFactoryData = async ({ fitAfterLoad = false } = {}) => {
+  const updated = await factoryStore.fetchAndFormatData();
+  if (updated && fitAfterLoad) {
+    await nextTick();
+    fitView();
+  }
+};
+
 onMounted(async () => {
-  // Initial fit with skeleton data
+  const hadCachedData = hasCachedFactoryData();
+
+  // Immediately render cached data (or skeleton on the first visit).
   await nextTick();
   fitView();
 
-  try {
-    await DatabaseName.fetchSchemaName();
-  } catch (error) {
+  DatabaseName.fetchSchemaName().catch(() => {
     console.warn('Schema name unavailable for plant toggle.');
+  });
+
+  if (hadCachedData) {
+    // Keep the previous response visible while refreshing in the background.
+    isLoading.value = false;
+    void refreshFactoryData();
+  } else {
+    await refreshFactoryData({ fitAfterLoad: true });
+    isLoading.value = false;
   }
 
-  try {
-    await factoryStore.fetchAndFormatData();
-  } catch (error) {
-    console.warn('Real-time API unavailable, loading fallback simulation.');
+  // Attempt a refresh every five seconds. The store skips a tick when the
+  // previous slow request is still in flight, preventing request overlap.
+  factoryRefreshTimer = window.setInterval(() => {
+    void refreshFactoryData();
+  }, FACTORY_REFRESH_INTERVAL_MS);
+});
+
+onBeforeUnmount(() => {
+  if (factoryRefreshTimer !== null) {
+    window.clearInterval(factoryRefreshTimer);
+    factoryRefreshTimer = null;
   }
-
-  isLoading.value = false;
-
-  // Re-fit after real data loads
-  await nextTick();
-  fitView();
 });
 </script>
 
@@ -2657,11 +2707,6 @@ onMounted(async () => {
   border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 2px;
   box-shadow: 0 0 5px currentColor;
-}
-
-.noc-state-legend__swatch--ok {
-  color: #50C878;
-  background: #50C878;
 }
 
 .noc-state-legend__swatch--warning {

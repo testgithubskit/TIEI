@@ -7,7 +7,7 @@ import { backendApi } from '@/services/apiServices';
 
 export const useFactoryPollOverviewStore = defineStore('useFactoryPollOverview', {
   state: () => ({
-    SelectedParmeter: { item_name: "Group-661", item_state: "OK" },
+    SelectedParmeter: { item_name: "APC_BATTERY", item_state: "OK" },
     availableParameters: [
     { item_name: "Group-661", item_state: "OK" },
     { item_name: "Group-492", item_state: "WARNING" },

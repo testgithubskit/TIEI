@@ -39,7 +39,7 @@ LOGGER = logging.getLogger(__name__)
 PONY_DATABASE = Database()
 
 
-def initialize_pony(debug=True):
+def initialize_pony(debug=False):
     """
 
     Function used to initialize the database connection object using pony orm
