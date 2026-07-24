@@ -253,6 +253,32 @@
                   <feGaussianBlur stdDeviation="3" result="blur" />
                   <feColorMatrix type="matrix" values="1 0 0 0 0  0 1 0 0 0  0 0 1 0 0  0 0 0 1 0" />
                 </filter>
+
+                <!-- Machine-only pastel tints (exact swatches; platforms/grid untouched) -->
+                <filter id="machine-tint-ok" color-interpolation-filters="sRGB" x="-10%" y="-10%" width="120%" height="120%">
+                  <feFlood flood-color="#E8FFC0" result="tint" />
+                  <feBlend in="tint" in2="SourceGraphic" mode="color" result="colored" />
+                  <feComposite in="colored" in2="SourceAlpha" operator="in" />
+                </filter>
+                <filter id="machine-tint-warning" color-interpolation-filters="sRGB" x="-10%" y="-10%" width="120%" height="120%">
+                  <feFlood flood-color="#FFF1B9" result="tint" />
+                  <feBlend in="tint" in2="SourceGraphic" mode="color" result="colored" />
+                  <feComposite in="colored" in2="SourceAlpha" operator="in" />
+                </filter>
+                <filter id="machine-tint-critical" color-interpolation-filters="sRGB" x="-10%" y="-10%" width="120%" height="120%">
+                  <feFlood flood-color="#FFD0E7" result="tint" />
+                  <feBlend in="tint" in2="SourceGraphic" mode="color" result="colored" />
+                  <feComposite in="colored" in2="SourceAlpha" operator="in" />
+                </filter>
+                <filter id="machine-tint-disconnected" color-interpolation-filters="sRGB" x="-10%" y="-10%" width="120%" height="120%">
+                  <feColorMatrix type="saturate" values="0" result="gray" />
+                  <feComponentTransfer in="gray">
+                    <feFuncR type="linear" slope="0.92" intercept="0.06" />
+                    <feFuncG type="linear" slope="0.92" intercept="0.06" />
+                    <feFuncB type="linear" slope="0.92" intercept="0.06" />
+                    <feFuncA type="identity" />
+                  </feComponentTransfer>
+                </filter>
               </defs>
 
               <!-- 1. BACKDROP GRID -->
@@ -367,7 +393,9 @@
                     preserveAspectRatio="xMidYMid meet"
                     :class="{ 'loading-machine': isLoading }"
                     :style="{ 
-                      filter: isLoading ? 'grayscale(0.5) contrast(0.9)' : (CONFIG.useFilters ? (getMachineFilter(machine.machine_state) || '') : 'none')
+                      filter: isLoading
+                        ? 'url(#machine-tint-disconnected)'
+                        : (CONFIG.useFilters ? (getMachineFilter(machine.machine_state) || 'none') : 'none')
                     }"
                   />
 
@@ -638,6 +666,8 @@ const anchorY = CONFIG.machineHeight * (1 - CONFIG.machineAnchorYPercent);
 
 const getPlatformColors = (state) => {
   const dark = panelTheme.value === 'dark';
+  // OK: neutral pad. WARNING/CRITICAL: colored pad + glow (previous behaviour).
+  // Pastel body tint stays on the machine SVG only.
   const mapping = {
     'OK': {
       top: dark ? '#1e293b' : '#f8fafc',
@@ -679,21 +709,21 @@ const getPlatformColors = (state) => {
 const getBeaconColors = (state) => {
   const mapping = {
     'WARNING': {
-      top: '#fbbf24', // bright amber
-      left: '#d97706', // darker amber
-      right: '#f59e0b', // main amber
+      top: '#fbbf24',
+      left: '#d97706',
+      right: '#f59e0b',
       glow: '#f59e0b'
     },
     'CRITICAL': {
-      top: '#f87171', // bright red
-      left: '#b91c1c', // darker red
-      right: '#ef4444', // main red
+      top: '#f87171',
+      left: '#b91c1c',
+      right: '#ef4444',
       glow: '#ef4444'
     },
     'DISCONNECTED': {
-      top: '#5B5B5B', // bright grey
-      left: '#3B3B3B', // darker grey
-      right: '#4B4B4B', // main grey
+      top: '#5B5B5B',
+      left: '#3B3B3B',
+      right: '#4B4B4B',
       glow: '#3B3B3B'
     },
     'OK': {

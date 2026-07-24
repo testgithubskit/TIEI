@@ -63,19 +63,16 @@ export const CONFIG = {
   // Keep production-line headings aligned with the same one-grid shift.
   lineLabelGridUOffset: -2,
 
-  // ── State Color Filters (CSS filter applied to machine SVG) ──
+  // ── Machine SVG tint filters (pastel body colors from shopfloor reference) ──
+  // Applied only to machine <image>; platforms/grid stay neutral.
+  // OK #E8FFC0 · WARNING #FFF1B9 · CRITICAL #FFD0E7
   useFilters: true,
   stateFilters: {
-    // Light green tint applies only to the machine artwork; platforms stay neutral.
-    OK: 'sepia(0.30) saturate(1.45) hue-rotate(75deg) brightness(1.04)',
-
-    WARNING: 'sepia(0.25) saturate(1.4) hue-rotate(0deg) brightness(1.02)',
-
-    CRITICAL: 'sepia(0.35) saturate(1.8) hue-rotate(320deg) brightness(0.94)',
-
-    DISCONNECTED: 'grayscale(0.85) contrast(0.80) saturate(0.1)',
-
-    UNKNOWN: 'grayscale(0.7) opacity(0.7)'
+    OK: 'url(#machine-tint-ok)',
+    WARNING: 'url(#machine-tint-warning)',
+    CRITICAL: 'url(#machine-tint-critical)',
+    DISCONNECTED: 'url(#machine-tint-disconnected)',
+    UNKNOWN: 'url(#machine-tint-disconnected)',
   },
 
   // ── Status Colors (tooltips, left panel badges, dots) ───

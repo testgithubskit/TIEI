@@ -257,6 +257,12 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         if (response.data.baseline_log_file_id !== undefined && response.data.baseline_log_file_id !== null) {
           this.baselineLogFileId = response.data.baseline_log_file_id;
         }
+        if (response.data.warning_limit !== undefined && response.data.warning_limit !== null) {
+          this.warningLimit = response.data.warning_limit;
+        }
+        if (response.data.critical_limit !== undefined && response.data.critical_limit !== null) {
+          this.criticalLimit = response.data.critical_limit;
+        }
         return response.data;
       } catch (error) {
         console.error('Error fetching pressure log files:', error);
@@ -304,17 +310,48 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
       this.pressureLogFiles = this.pressureLogFiles.map((item) => ({
         ...item,
         baseline: false,
+        rmse: null,
+        status: null,
       }));
+      return response.data;
+    },
+    async updatePressureLimits(warningLimit, criticalLimit) {
+      const params = new URLSearchParams();
+      if (warningLimit !== undefined && warningLimit !== null && warningLimit !== '') {
+        params.set('warningLimit', warningLimit);
+      }
+      if (criticalLimit !== undefined && criticalLimit !== null && criticalLimit !== '') {
+        params.set('criticalLimit', criticalLimit);
+      }
+      const url = `/pressure/machines/${encodeURIComponent(this.machine)}/limits?${params.toString()}`;
+      const response = await backendApi.put(url);
+      if (response.data.warning_limit !== undefined) {
+        this.warningLimit = response.data.warning_limit;
+      }
+      if (response.data.critical_limit !== undefined) {
+        this.criticalLimit = response.data.critical_limit;
+      }
+      this.alertMessage = response.data.message || 'Limits updated successfully';
+      this.isSuccessMessage = true;
+      setTimeout(() => {
+        this.alertMessage = '';
+      }, 4000);
       return response.data;
     },
     async updateLimits(setType, limitValue = null, append = null, referenceSignal = null) {
       if (this.isPressureContext) {
-        this.alertMessage = 'Limit updates are not supported for air pressure machines.';
-        this.isSuccessMessage = false;
-        setTimeout(() => {
-          this.alertMessage = '';
-        }, 5000);
-        return;
+        const warning = setType === 'warning_limit' ? limitValue : this.warningLimit;
+        const critical = setType === 'critical_limit' ? limitValue : this.criticalLimit;
+        try {
+          return await this.updatePressureLimits(warning, critical);
+        } catch (error) {
+          this.alertMessage = error.response?.data?.detail || 'Update failed. Please try again.';
+          this.isSuccessMessage = false;
+          setTimeout(() => {
+            this.alertMessage = '';
+          }, 5000);
+          throw error;
+        }
       }
 
       const url = `/factory/${this.parameterGroup}/${this.machine}/${this.actualParameterName}/`;

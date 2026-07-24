@@ -103,24 +103,60 @@ function formatProcessedDateOnly(value) {
   return parts[0] || text;
 }
 
+function formatProcessedTimeOnly(value) {
+  if (value == null || value === '') {
+    return '';
+  }
+  const text = String(value).trim();
+  let timePart = '';
+  if (text.includes(',')) {
+    timePart = text.split(',').slice(1).join(',').trim();
+  } else {
+    const isoSplit = text.match(/^\d{4}-\d{2}-\d{2}[ T](.+)$/);
+    if (isoSplit) {
+      timePart = isoSplit[1].trim();
+    } else {
+      const parts = text.split(/\s+/);
+      timePart = parts.length > 1 ? parts.slice(1).join(' ') : '';
+    }
+  }
+  const hhmmss = timePart.match(/^(\d{1,2}:\d{2}(?::\d{2})?)/);
+  return hhmmss ? hhmmss[1] : timePart.replace(/\.\d+.*$/, '');
+}
+
 const activeSeriesEntries = computed(() => {
   if (isTimeSeries.value && Array.isArray(props.seriesData) && props.seriesData.length > 0) {
     const filtered = props.seriesData
       .filter((entry) => Array.isArray(entry?.chart_data) && entry.chart_data.length > 0);
     let colorIdx = 0;
+    const usedLabels = new Set();
     return filtered.map((entry) => {
       const isBaseline = !!entry.baseline;
       const processedTime = entry.processed_time || entry.label || '';
       const dateOnly = formatProcessedDateOnly(processedTime);
-      const label = isBaseline
-        ? (dateOnly ? `Baseline — ${dateOnly}` : 'Baseline')
-        : (dateOnly || `Run ${colorIdx + 1}`);
+      const timeOnly = formatProcessedTimeOnly(processedTime);
+      let label;
+      let shortLabel;
+      if (isBaseline) {
+        label = dateOnly ? `BASELINE - ${dateOnly}` : 'BASELINE';
+        shortLabel = label;
+      } else {
+        const runNumber = colorIdx + 1;
+        // Unique Dygraph series names (same calendar day must not collide — duplicate
+        // labels overwrite series color config and paint every run the same color).
+        label = [dateOnly, timeOnly].filter(Boolean).join(' ') || `Run ${runNumber}`;
+        if (usedLabels.has(label)) {
+          label = `${label} (#${runNumber})`;
+        }
+        shortLabel = timeOnly ? `${dateOnly || 'Run'} ${timeOnly}` : label;
+      }
+      usedLabels.add(label);
       const color = isBaseline
         ? 'rgb(185, 28, 28)'
         : comparisonPalette[colorIdx++ % comparisonPalette.length];
       return {
         label,
-        shortLabel: label,
+        shortLabel,
         processedTime,
         baseline: isBaseline,
         color,

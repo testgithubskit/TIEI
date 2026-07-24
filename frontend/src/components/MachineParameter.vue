@@ -29,10 +29,44 @@ const props = defineProps({
 });
 
 const displayUpdateTime = computed(() => {
-  if (typeof props.lastestUpdateTime === 'string') {
-    return props.lastestUpdateTime;
+  const raw = props.lastestUpdateTime;
+  if (raw == null || raw === '') {
+    return '—';
   }
-  return new Date(props.lastestUpdateTime).toLocaleString();
+
+  let ms = null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) {
+    ms = raw;
+  } else {
+    const text = String(raw).trim();
+    if (/^\d{10,13}$/.test(text)) {
+      ms = Number(text);
+    } else {
+      const parsed = Date.parse(text);
+      if (!Number.isNaN(parsed)) {
+        ms = parsed;
+      } else {
+        // Already a human-readable timestamp from API
+        return text;
+      }
+    }
+  }
+
+  // Epoch seconds → milliseconds
+  if (ms < 1e12) {
+    ms *= 1000;
+  }
+
+  // Match previous format: e.g. 22/6/2022, 8:02:59 am
+  return new Date(ms).toLocaleString('en-IN', {
+    day: 'numeric',
+    month: 'numeric',
+    year: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true,
+  });
 });
 
 const bgColor = computed(() => {
@@ -51,8 +85,6 @@ const borderClass = computed(() => {
 const emit = defineEmits(['machine-parameter-clicked']);
 
 let showHoverDetails = ref(false);
-
-let spanText = `Parameter: ${props.actualParameterName} Value: ${props.parameterValue} Latest UpdateTime: ${new Date(props.lastestUpdateTime).toLocaleString()}`;
 
 const handleClick = () => {
   emit('machine-parameter-clicked', { actualParameterName: props.actualParameterName });

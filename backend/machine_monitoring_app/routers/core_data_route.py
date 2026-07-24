@@ -69,7 +69,8 @@ from machine_monitoring_app.database.crud_operations import get_current_machine_
     get_disconnection_history_data, get_cycle_time_factory_layout, get_cycle_time_machine_details, \
     get_all_machines_for_cycle_time, get_pressure_machine_timeline, parse_pressure_time_param, \
     parse_pressure_date_param, get_pressure_log_file_listing, update_pressure_log_file_baseline, \
-    clear_pressure_log_file_baseline, get_pressure_machine_timeline_by_log_files
+    clear_pressure_log_file_baseline, get_pressure_machine_timeline_by_log_files, \
+    update_pressure_machine_limits
 
 from machine_monitoring_app.database import TIMESCALEDB_URL
 from machine_monitoring_app.exception_handling.custom_exceptions import NoParameterGroupError, GetParamGroupDBError, \
@@ -1912,6 +1913,28 @@ async def put_pressure_machine_baseline_log_file(
     except Exception as error:
         LOGGER.error(f"Error updating pressure baseline for {machineName}: {error}")
         raise HTTPException(status_code=500, detail=f"Failed to update pressure baseline: {str(error)}")
+
+
+@ROUTER.put("/pressure/machines/{machineName}/limits")
+async def put_pressure_machine_limits(
+    machineName: str,
+    warningLimit: Optional[float] = Query(None, description="RMSE warning limit"),
+    criticalLimit: Optional[float] = Query(None, description="RMSE critical limit"),
+):
+    """Update RMSE warning/critical limits stored on pressure_monitoring_machine."""
+    if warningLimit is None and criticalLimit is None:
+        raise HTTPException(status_code=400, detail="Provide warningLimit and/or criticalLimit")
+    try:
+        return update_pressure_machine_limits(
+            machineName,
+            warning_limit=warningLimit,
+            critical_limit=criticalLimit,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error updating pressure limits for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to update pressure limits: {str(error)}")
 
 
 @ROUTER.delete("/pressure/machines/{machineName}/baseline-log-file")

@@ -603,18 +603,26 @@ class ParameterSchema(BaseModel):
     internal_parameter_name: str = "A0-P1"
     display_name: str = "X"
     actual_parameter_name: str
-    latest_update_time: Union[int, str]
+    # Pressure / missing readings can legitimately have null timestamps.
+    latest_update_time: Optional[Union[int, str]] = None
     latest_update_time_ms: Optional[int] = None
     parameter_value: Optional[Union[float, None]]
     parameter_state: str
     warning_limit: Optional[Union[float, None]]
     critical_limit: Optional[Union[float, None]]
+    is_pressure_machine: Optional[bool] = None
+    parameter_group: Optional[str] = None
+    parameter_type: Optional[str] = None
+    unit_name: Optional[str] = None
+    unit_short_name: Optional[str] = None
 
 
 class MachineSchema(BaseModel):
     machine_name: str
     parameters: list[ParameterSchema]
     machine_state: str = "OK"
+    is_pressure_machine: Optional[bool] = None
+    count: Optional[Dict[str, int]] = None
 
 
 class LocationSchema(BaseModel):
@@ -681,18 +689,24 @@ class Parameter_new(BaseModel):
     actual_parameter_name: str
     display_name: str
     internal_parameter_name: str
-    latest_update_time: Union[int, str]
+    latest_update_time: Optional[Union[int, str]] = None
     latest_update_time_ms: Optional[int] = None
     parameter_value: Union[float, None]
     parameter_state: str
     warning_limit: Union[float, None]
     critical_limit: Union[float, None]
+    parameter_group: Optional[str] = None
+    parameter_type: Optional[str] = None
+    unit_name: Optional[str] = None
+    unit_short_name: Optional[str] = None
+    is_pressure_machine: Optional[bool] = None
 
 class Machine_new(BaseModel):
     machine_name: str
     machine_state: str
     count: Dict[str, int]
     parameters: List[Parameter_new]
+    is_pressure_machine: Optional[bool] = None
 
 class Line_new(BaseModel):
     line_name: str
@@ -707,7 +721,8 @@ class new_Parameter(BaseModel):
     actual_parameter_name: str
     display_name: str
     internal_parameter_name: str
-    latest_update_time: Union[int, str]
+    # Pressure machines with no sensor rows yet can legitimately have null timestamps.
+    latest_update_time: Optional[Union[int, str]] = None
     latest_update_time_ms: Optional[int] = None
     parameter_value: Optional[float]
     parameter_state: str
@@ -717,6 +732,7 @@ class new_Parameter(BaseModel):
     parameter_type: Optional[str] = None
     unit_name: Optional[str] = None
     unit_short_name: Optional[str] = None
+    is_pressure_machine: Optional[bool] = None
 
 class new_MachineCount(BaseModel):
     OK: int
@@ -730,6 +746,7 @@ class new_Machine(BaseModel):
     machine_state: str
     count: new_MachineCount
     parameters: List[new_Parameter]
+    is_pressure_machine: Optional[bool] = None
 
 
 class new_LineCount(BaseModel):

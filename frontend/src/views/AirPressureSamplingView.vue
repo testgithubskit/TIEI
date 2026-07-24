@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onBeforeMount, onMounted } from "vue";
+import { computed, ref, onBeforeMount, onMounted, watch } from "vue";
 import flatPickr from 'vue-flatpickr-component';
 import 'flatpickr/dist/flatpickr.css';
 
@@ -160,6 +160,13 @@ const baselineLogFileLabel = computed(() => {
   return 'Baseline Active';
 });
 
+const baselineCycleDurationLabel = computed(() => {
+  if (!baselineLogFileId.value) return null;
+  const baselineRow = pressureLogFiles.value.find((item) => item.log_file_id === baselineLogFileId.value);
+  if (baselineRow?.cycle_duration_seconds == null) return null;
+  return formatOneDecimal(baselineRow.cycle_duration_seconds);
+});
+
 const canUpdateBaseline = computed(() => selectedPressureLogFileIds.value.length === 1);
 const hasBaseline = computed(() => baselineLogFileId.value != null);
 const hasPressureSelections = computed(() => selectedPressureLogFileIds.value.length > 0);
@@ -309,10 +316,25 @@ async function loadPressureLogFiles({ refreshGraph = true } = {}) {
       pressureDateRange.value.startDate,
       pressureDateRange.value.endDate,
     );
-    const validIds = new Set((response.log_files || []).map((item) => item.log_file_id));
-    machineSamplingWithLimitsStore.selectedPressureLogFileIds = selectedPressureLogFileIds.value
-      .filter((id) => validIds.has(id))
+    const logFiles = response.log_files || [];
+    const validIds = new Set(logFiles.map((item) => item.log_file_id));
+    const baselineId = response.baseline_log_file_id ?? baselineLogFileId.value;
+    let selected = selectedPressureLogFileIds.value
+      .filter((id) => validIds.has(id) && id !== baselineId)
       .slice(0, MAX_PRESSURE_LOG_SELECTIONS);
+
+    // Default graph: baseline + latest run (auto-select newest non-baseline file)
+    if (selected.length === 0) {
+      const latestRun = logFiles.find((item) => {
+        const id = item.log_file_id;
+        return id != null && id !== baselineId && !item.baseline;
+      });
+      if (latestRun) {
+        selected = [latestRun.log_file_id];
+      }
+    }
+
+    machineSamplingWithLimitsStore.selectedPressureLogFileIds = selected;
     if (refreshGraph) {
       await refreshPressureComparisonGraph();
     }
@@ -408,12 +430,25 @@ async function handlePressureBaselineUpdate() {
 
   isUpdatingPressureBaseline.value = true;
   try {
-    await machineSamplingWithLimitsStore.updatePressureBaseline(selectedPressureLogFileIds.value[0]);
+    const result = await machineSamplingWithLimitsStore.updatePressureBaseline(
+      selectedPressureLogFileIds.value[0],
+    );
     await loadPressureLogFiles({ refreshGraph: false });
     await refreshPressureComparisonGraph();
+    const recalc = result?.rmse_recalculation || {};
+    const elapsedMs = recalc.elapsed_ms;
+    const filesUpdated = recalc.files_updated;
+    const timingPart = Number.isFinite(Number(elapsedMs))
+      ? ` RMSE recalculated for ${filesUpdated ?? '—'} file(s) in ${Number(elapsedMs).toFixed(1)} ms.`
+      : '';
+    if (Number.isFinite(Number(elapsedMs))) {
+      console.log(
+        `[pressure RMSE] baseline update files_updated=${filesUpdated} elapsed_ms=${Number(elapsedMs).toFixed(1)}`,
+      );
+    }
     Toastify({
-      text: 'Baseline updated successfully.',
-      duration: 3000,
+      text: (result?.message || 'Baseline updated successfully.') + (result?.message ? '' : timingPart),
+      duration: 5000,
       close: true,
       gravity: 'top',
       position: 'right',
@@ -514,27 +549,53 @@ function OnHoverCallBack(hoverData){
   };
 }
 
-// Collapsible filter panel state
-const isFilterCollapsed = ref(false);
+// Collapsible left panels — collapsed by default
+const isFilterCollapsed = ref(true);
+const isLimitsCollapsed = ref(true);
+const isSavingPressureLimits = ref(false);
+const editableWarningLimit = ref(null);
+const editableCriticalLimit = ref(null);
 
-// RMSE Warning & Critical Limits (configurable in left panel)
-const rmseWarningLimit = ref(50.0);
-const rmseCriticalLimit = ref(100.0);
+watch(
+  [warningLimit, criticalLimit],
+  ([warn, crit]) => {
+    editableWarningLimit.value = warn;
+    editableCriticalLimit.value = crit;
+  },
+  { immediate: true },
+);
 
 function getRmseAlertStatus(item) {
-  if (!item || !item.active || item.isBaseline || item.rmse == null || isNaN(Number(item.rmse))) {
+  if (!item || !item.active || item.isBaseline) {
     return 'normal';
   }
-  const val = Number(item.rmse);
-  const crit = Number(rmseCriticalLimit.value);
-  const warn = Number(rmseWarningLimit.value);
+  const status = String(item.status || '').toUpperCase();
+  if (status === 'CRITICAL') return 'critical';
+  if (status === 'WARNING') return 'warning';
+  if (status === 'OK') return 'normal';
+  if (item.rmse == null || isNaN(Number(item.rmse))) return 'normal';
 
-  if (Number.isFinite(crit) && crit > 0 && val >= crit) {
-    return 'critical';
-  }
-  if (Number.isFinite(warn) && warn > 0 && val >= warn) {
-    return 'warning';
-  }
+  const val = Number(item.rmse);
+  const crit = Number(criticalLimit.value);
+  const warn = Number(warningLimit.value);
+  if (Number.isFinite(crit) && crit > 0 && val >= crit) return 'critical';
+  if (Number.isFinite(warn) && warn > 0 && val >= warn) return 'warning';
+  return 'normal';
+}
+
+function formatRunStatusLabel(status) {
+  const normalized = String(status || '').toUpperCase();
+  if (normalized === 'CRITICAL') return 'CRITICAL';
+  if (normalized === 'WARNING') return 'WARNING';
+  if (normalized === 'OK') return 'OK';
+  return '—';
+}
+
+function getLogRowAlertStatus(row) {
+  if (!row || row.baseline) return 'normal';
+  const status = String(row.status || '').toUpperCase();
+  if (status === 'CRITICAL') return 'critical';
+  if (status === 'WARNING') return 'warning';
   return 'normal';
 }
 
@@ -554,46 +615,40 @@ function formatOneDecimal(val) {
   return Number(val).toFixed(1);
 }
 
-function calculateRmseForRun(runLogFileId) {
-  if (!runLogFileId) return null;
-  const seriesList = machineSamplingWithLimitsStore.pressureComparisonSeries || [];
-  if (!seriesList.length) return null;
-
-  // Find baseline series and run series
-  const baseSeries = seriesList.find((s) => s.is_baseline || s.log_file_id === baselineLogFileId.value);
-  const runSeries = seriesList.find((s) => s.log_file_id === runLogFileId && !s.is_baseline);
-
-  if (!baseSeries?.chart_data?.length || !runSeries?.chart_data?.length) {
-    return null;
+async function savePressureLimits() {
+  isSavingPressureLimits.value = true;
+  try {
+    await machineSamplingWithLimitsStore.updatePressureLimits(
+      editableWarningLimit.value,
+      editableCriticalLimit.value,
+    );
+    await loadPressureLogFiles({ refreshGraph: false });
+    Toastify({
+      text: 'RMSE limits updated from pressure_monitoring_machine.',
+      duration: 3000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: '#10b981',
+    }).showToast();
+  } catch (error) {
+    Toastify({
+      text: error.response?.data?.detail || 'Failed to update limits.',
+      duration: 5000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: '#ef4444',
+    }).showToast();
+  } finally {
+    isSavingPressureLimits.value = false;
   }
-
-  const basePoints = baseSeries.chart_data;
-  const runPoints = runSeries.chart_data;
-  const n = Math.min(basePoints.length, runPoints.length);
-  if (n === 0) return null;
-
-  let sumSqErr = 0;
-  let validCount = 0;
-  for (let i = 0; i < n; i++) {
-    const yBase = basePoints[i][1];
-    const yRun = runPoints[i][1];
-    if (yBase != null && yRun != null && Number.isFinite(Number(yBase)) && Number.isFinite(Number(yRun))) {
-      const diff = Number(yRun) - Number(yBase);
-      sumSqErr += diff * diff;
-      validCount++;
-    }
-  }
-
-  if (validCount === 0) return null;
-  const rmse = Math.sqrt(sumSqErr / validCount);
-  return formatOneDecimal(rmse);
 }
 
-// 4 Fixed KPI Slots (Baseline + Run 1 + Run 2 + Run 3) with greyed-out inactive state
+// Active KPI cards only (max 6 slots: 1 baseline + 5 runs). Baseline: no RMSE/status.
 const fourKpiSlots = computed(() => {
   const slots = [];
 
-  // Slot 0: Baseline
   const bId = baselineLogFileId.value;
   const bRow = (bId != null && isBaselineVisible.value)
     ? pressureLogFiles.value.find((r) => r.log_file_id === bId)
@@ -606,64 +661,38 @@ const fourKpiSlots = computed(() => {
       isBaseline: true,
       badgeText: 'BASELINE RUN',
       timestamp: [formatProcessedDateOnly(bRow.time_stamp), formatProcessedTimeOnly(bRow.time_stamp)].filter(Boolean).join(' '),
-      duration: bRow.cycle_duration_seconds != null ? formatOneDecimal(bRow.cycle_duration_seconds) : null,
-      mean: bRow.mean_pressure != null ? formatOneDecimal(bRow.mean_pressure) : null,
-      peak: bRow.peak_pressure != null ? formatOneDecimal(bRow.peak_pressure) : null,
-      ripple: bRow.pressure_ripple != null ? formatOneDecimal(bRow.pressure_ripple) : null,
-      rmse: null, // RMSE not shown for baseline
-      color: 'rgb(185, 28, 28)', // Red
-    });
-  } else {
-    slots.push({
-      key: 'baseline',
-      active: false,
-      isBaseline: true,
-      badgeText: 'BASELINE (OFF)',
-      timestamp: 'No Active Baseline',
       duration: null,
-      color: '#cbd5e1',
+      rmse: null,
+      status: null,
+      color: 'rgb(185, 28, 28)',
     });
   }
 
-  // Slots 1, 2, 3: Up to 3 selected runs
   const nonBaselineColors = [
-    'rgb(37, 99, 235)',   // Blue #2563eb (Run 1)
-    'rgb(147, 51, 234)',  // Purple #9333ea (Run 2)
-    'rgb(219, 39, 119)'   // Pink #db2777 (Run 3)
+    'rgb(37, 99, 235)',
+    'rgb(147, 51, 234)',
+    'rgb(219, 39, 119)',
+    'rgb(5, 150, 105)',
+    'rgb(234, 88, 12)',
   ];
 
-  for (let i = 0; i < 3; i++) {
-    const selectedId = selectedPressureLogFileIds.value[i];
-    const sRow = selectedId != null ? pressureLogFiles.value.find((r) => r.log_file_id === selectedId) : null;
-    const color = nonBaselineColors[i];
-
-    if (sRow) {
-      const computedRmse = calculateRmseForRun(sRow.log_file_id);
-      slots.push({
-        key: `run_${i + 1}`,
-        active: true,
-        isBaseline: false,
-        badgeText: `RUN #${i + 1}`,
-        timestamp: [formatProcessedDateOnly(sRow.time_stamp), formatProcessedTimeOnly(sRow.time_stamp)].filter(Boolean).join(' '),
-        duration: sRow.cycle_duration_seconds != null ? formatOneDecimal(sRow.cycle_duration_seconds) : null,
-        mean: sRow.mean_pressure != null ? formatOneDecimal(sRow.mean_pressure) : null,
-        peak: sRow.peak_pressure != null ? formatOneDecimal(sRow.peak_pressure) : null,
-        ripple: sRow.pressure_ripple != null ? formatOneDecimal(sRow.pressure_ripple) : null,
-        rmse: computedRmse,
-        color: color,
-      });
-    } else {
-      slots.push({
-        key: `run_${i + 1}`,
-        active: false,
-        isBaseline: false,
-        badgeText: `RUN #${i + 1} (EMPTY)`,
-        timestamp: 'Select timestamp',
-        duration: null,
-        color: '#cbd5e1',
-      });
-    }
-  }
+  selectedPressureLogFileIds.value.forEach((selectedId, i) => {
+    if (selectedId == null || selectedId === bId) return;
+    const sRow = pressureLogFiles.value.find((r) => r.log_file_id === selectedId);
+    if (!sRow) return;
+    const color = nonBaselineColors[i % nonBaselineColors.length];
+    slots.push({
+      key: `run_${selectedId}`,
+      active: true,
+      isBaseline: false,
+      badgeText: `RUN #${i + 1}`,
+      timestamp: [formatProcessedDateOnly(sRow.time_stamp), formatProcessedTimeOnly(sRow.time_stamp)].filter(Boolean).join(' '),
+      duration: sRow.cycle_duration_seconds != null ? formatOneDecimal(sRow.cycle_duration_seconds) : null,
+      rmse: sRow.rmse != null ? formatOneDecimal(sRow.rmse) : null,
+      status: sRow.status || 'OK',
+      color,
+    });
+  });
 
   return slots;
 });
@@ -751,14 +780,14 @@ onMounted(async () => {
 
         <!-- Warning Limit Card -->
         <div class="mls-top-card">
-          <span class="mls-top-card-label">WARNING LIMIT</span>
-          <span class="mls-top-card-value mls-text-warn">{{ warningLimit }} Pa</span>
+          <span class="mls-top-card-label">WARNING LIMIT (RMSE)</span>
+          <span class="mls-top-card-value mls-text-warn">{{ warningLimit ?? '—' }}</span>
         </div>
 
         <!-- Critical Limit Card -->
         <div class="mls-top-card">
-          <span class="mls-top-card-label">CRITICAL LIMIT</span>
-          <span class="mls-top-card-value mls-text-crit">{{ criticalLimit }} Pa</span>
+          <span class="mls-top-card-label">CRITICAL LIMIT (RMSE)</span>
+          <span class="mls-top-card-value mls-text-crit">{{ criticalLimit ?? '—' }}</span>
         </div>
       </div>
 
@@ -779,6 +808,13 @@ onMounted(async () => {
                   <span class="mls-card-badge mls-card-badge--red">BASELINE</span>
                   <span class="mls-card-ts-val" :class="{ 'mls-card-ts-val--none': !hasBaseline }">
                     {{ baselineLogFileLabel }}
+                  </span>
+                  <span
+                    v-if="baselineCycleDurationLabel != null"
+                    class="mls-baseline-cycle-chip"
+                    title="Baseline cycle duration"
+                  >
+                    {{ baselineCycleDurationLabel }}s
                   </span>
                 </div>
                 <button
@@ -821,33 +857,53 @@ onMounted(async () => {
               </div>
             </div>
 
-            <!-- 2. RMSE ALERT LIMITS CARD -->
+            <!-- 2. RMSE ALERT LIMITS CARD (collapsed by default) -->
             <div class="mls-control-card">
-              <div class="mls-card-title-bar">
-                <span class="mls-card-title-text">RMSE ALERT LIMITS (Pa)</span>
-              </div>
-              <div class="mls-rmse-two-col">
-                <div class="mls-rmse-box">
-                  <span class="mls-rmse-box-label text-amber-600">WARNING LIMIT</span>
-                  <input
-                    v-model.number="rmseWarningLimit"
-                    type="number"
-                    step="1"
-                    min="0"
-                    class="mls-rmse-box-input mls-rmse-box-input--warn"
-                    placeholder="50"
-                  />
+              <div class="mls-card-title-bar mls-card-title-bar--clickable" @click="isLimitsCollapsed = !isLimitsCollapsed">
+                <div class="mls-card-title-left">
+                  <span class="mls-card-title-text">RMSE ALERT LIMITS</span>
                 </div>
-                <div class="mls-rmse-box">
-                  <span class="mls-rmse-box-label text-red-600">CRITICAL LIMIT</span>
-                  <input
-                    v-model.number="rmseCriticalLimit"
-                    type="number"
-                    step="1"
-                    min="0"
-                    class="mls-rmse-box-input mls-rmse-box-input--crit"
-                    placeholder="100"
-                  />
+                <button type="button" class="mls-toggle-btn" title="Toggle Limits Panel">
+                  <span>{{ isLimitsCollapsed ? 'Expand' : 'Collapse' }}</span>
+                  <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 ml-1 transition-transform" :class="{ 'rotate-180': isLimitsCollapsed }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 9l-7 7-7-7" />
+                  </svg>
+                </button>
+              </div>
+              <div v-show="!isLimitsCollapsed" class="mls-card-body-content">
+                <div class="mls-rmse-two-col">
+                  <div class="mls-rmse-box">
+                    <span class="mls-rmse-box-label text-amber-600">WARNING LIMIT</span>
+                    <input
+                      v-model.number="editableWarningLimit"
+                      type="number"
+                      step="1"
+                      min="0"
+                      class="mls-rmse-box-input mls-rmse-box-input--warn"
+                      placeholder="Warning"
+                    />
+                  </div>
+                  <div class="mls-rmse-box">
+                    <span class="mls-rmse-box-label text-red-600">CRITICAL LIMIT</span>
+                    <input
+                      v-model.number="editableCriticalLimit"
+                      type="number"
+                      step="1"
+                      min="0"
+                      class="mls-rmse-box-input mls-rmse-box-input--crit"
+                      placeholder="Critical"
+                    />
+                  </div>
+                </div>
+                <div class="mls-card-actions-row" style="margin-top: 8px;">
+                  <button
+                    type="button"
+                    class="mls-ctrl-btn mls-ctrl-btn--primary"
+                    :disabled="isSavingPressureLimits"
+                    @click="savePressureLimits"
+                  >
+                    {{ isSavingPressureLimits ? 'Saving...' : 'Save Limits' }}
+                  </button>
                 </div>
               </div>
             </div>
@@ -963,7 +1019,7 @@ onMounted(async () => {
               </span>
             </div>
             <div class="mls-th mls-th-metrics">
-              <span>MEAN (Pa)</span>
+              <span>RMSE</span>
             </div>
           </div>
 
@@ -991,9 +1047,18 @@ onMounted(async () => {
                 </div>
                 <div class="mls-td mls-td-date">{{ formatProcessedDateOnly(row.time_stamp || row.processed_time) }}</div>
                 <div class="mls-td mls-td-time">{{ formatProcessedTimeOnly(row.time_stamp || row.processed_time) }}</div>
-                <div class="mls-td mls-td-metrics" @click.stop="toggleRowExpand(row.log_file_id)" title="Click to view detailed metrics">
-                  <span class="mls-metrics-val">{{ row.mean_pressure != null ? formatOneDecimal(row.mean_pressure) + ' Pa' : '—' }}</span>
-                  <button type="button" class="mls-row-expand-btn" :class="{ 'mls-row-expand-btn--open': expandedRowId === row.log_file_id }" title="View Run Metrics">
+                <div class="mls-td mls-td-metrics" @click.stop="toggleRowExpand(row.log_file_id)" title="Click to view run metrics">
+                  <span
+                    class="mls-metrics-val"
+                    :class="{
+                      'mls-rmse-val--crit': getLogRowAlertStatus(row) === 'critical',
+                      'mls-rmse-val--warn': getLogRowAlertStatus(row) === 'warning',
+                      'text-emerald-600': getLogRowAlertStatus(row) === 'normal' && row.rmse != null,
+                    }"
+                  >
+                    {{ row.rmse != null ? formatOneDecimal(row.rmse) : '—' }}
+                  </span>
+                  <button type="button" class="mls-row-expand-btn" :class="{ 'mls-row-expand-btn--open': expandedRowId === row.log_file_id }" title="View Run Details">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform" :class="{ 'rotate-180': expandedRowId === row.log_file_id }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 9l-7 7-7-7" />
                     </svg>
@@ -1005,20 +1070,28 @@ onMounted(async () => {
               <div v-if="expandedRowId === row.log_file_id" class="mls-row-drawer" @click.stop>
                 <div class="mls-drawer-grid">
                   <div class="mls-drawer-stat">
-                    <span class="mls-drawer-label">Mean Pressure</span>
+                    <span class="mls-drawer-label">Mean</span>
                     <span class="mls-drawer-val">{{ row.mean_pressure != null ? formatOneDecimal(row.mean_pressure) + ' Pa' : 'N/A' }}</span>
                   </div>
                   <div class="mls-drawer-stat">
-                    <span class="mls-drawer-label">Peak Pressure</span>
+                    <span class="mls-drawer-label">Peak</span>
                     <span class="mls-drawer-val text-amber-600">{{ row.peak_pressure != null ? formatOneDecimal(row.peak_pressure) + ' Pa' : 'N/A' }}</span>
+                  </div>
+                  <div class="mls-drawer-stat">
+                    <span class="mls-drawer-label">Ripple</span>
+                    <span class="mls-drawer-val text-purple-600">{{ row.pressure_ripple != null ? formatOneDecimal(row.pressure_ripple) + ' Pa' : 'N/A' }}</span>
+                  </div>
+                  <div class="mls-drawer-stat">
+                    <span class="mls-drawer-label">Status</span>
+                    <span class="mls-drawer-val" :class="{
+                      'text-red-600': getLogRowAlertStatus(row) === 'critical',
+                      'text-amber-600': getLogRowAlertStatus(row) === 'warning',
+                      'text-emerald-600': getLogRowAlertStatus(row) === 'normal',
+                    }">{{ formatRunStatusLabel(row.status) }}</span>
                   </div>
                   <div class="mls-drawer-stat">
                     <span class="mls-drawer-label">Cycle Duration</span>
                     <span class="mls-drawer-val text-blue-600">{{ row.cycle_duration_seconds != null ? formatOneDecimal(row.cycle_duration_seconds) + ' s' : 'N/A' }}</span>
-                  </div>
-                  <div class="mls-drawer-stat">
-                    <span class="mls-drawer-label">Pressure Ripple (StdDev)</span>
-                    <span class="mls-drawer-val text-purple-600">{{ row.pressure_ripple != null ? formatOneDecimal(row.pressure_ripple) + ' Pa' : 'N/A' }}</span>
                   </div>
                 </div>
                 <div class="mls-drawer-footer" v-if="row.start_time || row.end_time">
@@ -1053,22 +1126,23 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- ── 4 FIXED KPI SLOTS BANNER ── -->
-          <div class="mls-metrics-summary-bar">
+          <!-- ── KPI row: fixed 6 columns (baseline + up to 5 runs); cards do not stretch ── -->
+          <div v-if="fourKpiSlots.length" class="mls-metrics-summary-bar">
             <div
               v-for="item in fourKpiSlots"
               :key="item.key"
               class="mls-metric-card"
               :class="{
-                'mls-metric-card--inactive': !item.active,
+                'mls-metric-card--baseline': item.isBaseline,
                 'mls-metric-card--rmse-warn': getRmseAlertStatus(item) === 'warning',
                 'mls-metric-card--rmse-crit': getRmseAlertStatus(item) === 'critical',
               }"
-              :style="item.active ? {
-                borderLeftColor: getRmseAlertStatus(item) === 'critical' ? '#dc2626' : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color)
-              } : {}"
+              :style="{
+                borderLeftColor: getRmseAlertStatus(item) === 'critical'
+                  ? '#dc2626'
+                  : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color)
+              }"
             >
-              <!-- Card Header: Title + Duration + Timestamp -->
               <div class="mls-metric-card-header">
                 <div class="mls-metric-title-group">
                   <span
@@ -1076,28 +1150,19 @@ onMounted(async () => {
                     :style="{ background: getRmseAlertStatus(item) === 'critical' ? '#dc2626' : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color) }"
                   />
                   <span class="mls-metric-badge-text">{{ item.badgeText }}</span>
-                  <span v-if="item.active && item.duration != null" class="mls-metric-duration-chip">
+                  <span v-if="!item.isBaseline && item.duration != null" class="mls-metric-duration-chip">
                     {{ item.duration }}s
                   </span>
                 </div>
                 <span class="mls-metric-ts">{{ item.timestamp }}</span>
               </div>
 
-              <!-- Metrics Stats Row (4 Columns: MEAN | PEAK | RIPPLE | RMSE) -->
-              <div class="mls-metric-card-grid">
-                <div class="mls-metric-stat">
-                  <span class="mls-metric-label">MEAN</span>
-                  <span class="mls-metric-val">{{ item.active && item.mean != null ? item.mean + ' Pa' : '—' }}</span>
-                </div>
-                <div class="mls-metric-stat">
-                  <span class="mls-metric-label">PEAK</span>
-                  <span class="mls-metric-val">{{ item.active && item.peak != null ? item.peak + ' Pa' : '—' }}</span>
-                </div>
-                <div class="mls-metric-stat">
-                  <span class="mls-metric-label">RIPPLE (STD)</span>
-                  <span class="mls-metric-val">{{ item.active && item.ripple != null ? item.ripple + ' Pa' : '—' }}</span>
-                </div>
-                <div class="mls-metric-stat" :class="{ 'mls-stat--rmse-alert': getRmseAlertStatus(item) !== 'normal' }">
+              <!-- Baseline: no RMSE / status. Runs: RMSE + status from DB. -->
+              <div v-if="!item.isBaseline" class="mls-metric-card-grid">
+                <div
+                  class="mls-metric-stat"
+                  :class="{ 'mls-stat--rmse-alert': getRmseAlertStatus(item) !== 'normal' }"
+                >
                   <span class="mls-metric-label" :class="{
                     'text-red-700 font-extrabold': getRmseAlertStatus(item) === 'critical',
                     'text-amber-700 font-extrabold': getRmseAlertStatus(item) === 'warning',
@@ -1105,15 +1170,31 @@ onMounted(async () => {
                   <span class="mls-metric-val" :class="{
                     'mls-rmse-val--crit': getRmseAlertStatus(item) === 'critical',
                     'mls-rmse-val--warn': getRmseAlertStatus(item) === 'warning',
-                    'text-emerald-600': item.active && !item.isBaseline && item.rmse != null && getRmseAlertStatus(item) === 'normal',
+                    'text-emerald-600': item.rmse != null && getRmseAlertStatus(item) === 'normal',
                   }">
-                    {{ item.active && !item.isBaseline && item.rmse != null ? item.rmse + ' Pa' : '—' }}
+                    {{ item.rmse != null ? item.rmse : '—' }}
+                  </span>
+                </div>
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">STATUS</span>
+                  <span class="mls-metric-val" :class="{
+                    'mls-rmse-val--crit': getRmseAlertStatus(item) === 'critical',
+                    'mls-rmse-val--warn': getRmseAlertStatus(item) === 'warning',
+                    'text-emerald-600': item.status && getRmseAlertStatus(item) === 'normal',
+                  }">
+                    {{ formatRunStatusLabel(item.status) }}
                     <span v-if="getRmseAlertStatus(item) === 'critical'" class="mls-alert-pill mls-alert-pill--crit">CRIT</span>
                     <span v-else-if="getRmseAlertStatus(item) === 'warning'" class="mls-alert-pill mls-alert-pill--warn">WARN</span>
                   </span>
                 </div>
               </div>
+              <div v-else class="mls-metric-card-baseline-note">
+                Reference waveform
+              </div>
             </div>
+          </div>
+          <div v-else class="mls-metrics-summary-bar mls-metrics-summary-bar--empty">
+            <span class="mls-kpi-empty-hint">Select a timestamp to compare against the baseline.</span>
           </div>
 
           <!-- ── GRAPH BODY CONTAINER ── -->
@@ -1378,6 +1459,19 @@ onMounted(async () => {
   gap: 8px;
   min-width: 0;
   flex: 1;
+}
+
+.mls-baseline-cycle-chip {
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 800;
+  font-family: 'JetBrains Mono', monospace;
+  background: #fef2f2;
+  color: #b91c1c;
+  border: 1px solid #fecaca;
+  padding: 1px 6px;
+  border-radius: 3px;
+  line-height: 1.3;
 }
 
 .mls-card-badge {
@@ -1666,6 +1760,23 @@ onMounted(async () => {
   background: #fee2e2;
   color: #991b1b;
   border: 1px solid #fca5a5;
+}
+
+.mls-alert-pill--ok {
+  background: #d1fae5;
+  color: #065f46;
+  border: 1px solid #6ee7b7;
+}
+
+.mls-row-status-pill {
+  display: inline-block;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 3px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  vertical-align: middle;
 }
 
 .mls-search-title {
@@ -2053,6 +2164,12 @@ onMounted(async () => {
   gap: 6px 12px;
 }
 
+@media (min-width: 360px) {
+  .mls-drawer-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
 .mls-drawer-stat {
   display: flex;
   flex-direction: column;
@@ -2089,14 +2206,43 @@ onMounted(async () => {
   font-family: 'JetBrains Mono', monospace;
 }
 
-/* ── Simplified 4 KPI Slots Banner ── */
+/* ── KPI row: always 6 equal slots; active cards occupy one slot each ── */
 .mls-metrics-summary-bar {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   padding: 8px 12px;
   background: #ffffff;
   border-bottom: 1px solid #cbd5e1;
+  justify-items: stretch;
+}
+
+.mls-metrics-summary-bar--empty {
+  display: flex;
+  align-items: center;
+  min-height: 44px;
+  grid-template-columns: none;
+}
+
+.mls-kpi-empty-hint {
+  font-size: 12px;
+  font-weight: 600;
+  color: #94a3b8;
+  font-family: 'Manrope', sans-serif;
+}
+
+.mls-metric-card-baseline-note {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  font-family: 'Manrope', sans-serif;
+}
+
+@media (max-width: 1100px) {
+  .mls-metrics-summary-bar {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 .mls-metric-card {
@@ -2178,7 +2324,7 @@ onMounted(async () => {
 
 .mls-metric-card-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
   margin-top: 2px;
 }
