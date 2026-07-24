@@ -1,7 +1,6 @@
 <script setup>
 import { computed, ref, onBeforeMount, onMounted } from "vue";
 
-import axios from 'axios';
 import flatPickr from 'vue-flatpickr-component';
 import 'flatpickr/dist/flatpickr.css';
 
@@ -28,6 +27,7 @@ import 'toastify-js/src/toastify.css';
 import CardBoxWidgetPlainWrap from "@/components/CardBoxWidgetPlainWrap.vue";
 import { useNavigationHistoryStore } from '@/stores/navigationHistoryStore';
 
+import { backendApi } from '@/services/apiServices';
 import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore';
 import { useActivityStore } from '@/stores/ActivityStore.js'; 
 import { useRouter } from 'vue-router';
@@ -71,6 +71,19 @@ const cycleTimeChartOption = computed(() => {
 
   const times = cycleTimeChartData.value.map(item => item.time);
   const cycleTimes = cycleTimeChartData.value.map(item => item.cycle_time);
+  const pointCount = times.length;
+  const selectedDurationMs = Math.max(
+    0,
+    Number(machineSamplingWithLimitsStore.selectedDates.to || 0)
+      - Number(machineSamplingWithLimitsStore.selectedDates.from || 0),
+  );
+  const tenHoursMs = 10 * 60 * 60 * 1000;
+  // Long ranges: keep all bars, but thin x-axis labels to ~10–15 readable ticks
+  let axisLabelInterval = 0;
+  if (selectedDurationMs > tenHoursMs && pointCount > 15) {
+    const targetLabels = 12;
+    axisLabelInterval = Math.max(0, Math.ceil(pointCount / targetLabels) - 1);
+  }
 
   return {
     tooltip: {
@@ -94,7 +107,8 @@ const cycleTimeChartOption = computed(() => {
       data: times,
       axisLabel: {
         rotate: 45,
-        interval: 0,
+        interval: axisLabelInterval,
+        hideOverlap: true,
         textStyle: {
           fontSize: 10
         }
@@ -339,9 +353,9 @@ const fetchCycleTimeData = async () => {
     const fromTimeStr = formatDate(fromTime);
     const toTimeStr = formatDate(toTime);
 
-    const url = `http://172.18.100.87:8000/api/v1/cycle-time/machine/${encodeURIComponent(machineName)}?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
+    const url = `/cycle-time/machine/${encodeURIComponent(machineName)}?fromTime=${encodeURIComponent(fromTimeStr)}&toTime=${encodeURIComponent(toTimeStr)}`;
 
-    const response = await axios.get(url);
+    const response = await backendApi.get(url);
     cycleTimeData.value = response.data;
     
     if (response.data.warning_limit !== null && response.data.critical_limit !== null) {
@@ -408,9 +422,9 @@ const updateCycleTimeLimits = async () => {
     }
     
     const machineName = machineSamplingWithLimitsStore.machine;
-    const url = `http://172.18.100.87:8000/api/v1/cycle-time/limits/${encodeURIComponent(machineName)}?warning_limit=${warningLimit}&critical_limit=${criticalLimit}`;
+    const url = `/cycle-time/limits/${encodeURIComponent(machineName)}?warning_limit=${warningLimit}&critical_limit=${criticalLimit}`;
     
-    const response = await axios.put(url);
+    const response = await backendApi.put(url);
     
     cycleTimeLimits.value = {
       warning: warningLimit,
