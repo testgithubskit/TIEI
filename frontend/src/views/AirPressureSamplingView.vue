@@ -23,14 +23,24 @@ const machineSamplingWithLimitsStore = useMachineSamplingWithLimitsStore();
 const warningLimit = computed(() => machineSamplingWithLimitsStore.warningLimit);
 const criticalLimit = computed(() => machineSamplingWithLimitsStore.criticalLimit);
 const chartData = computed(() => machineSamplingWithLimitsStore.chartData);
-const lineName = computed(() => (
-  machineSamplingWithLimitsStore.lineName
-  || machineSamplingWithLimitsStore.line
-  || machineSamplingWithLimitsStore.lastSelectedParameter?.lineName
-  || machineSamplingWithLimitsStore.lastSelectedParameter?.line_name
-  || machineSamplingWithLimitsStore.lastSelectedParameter?.line
-  || '—'
-));
+const AIR_HONING_MACHINE_NAME = 'T_B_OP200';
+const AIR_HONING_SIGNAL_NAMES = new Set(['2nd Rough', '4th Finish']);
+
+/** Air honing / air pressure always sits on BLOCK line. */
+const lineName = computed(() => 'BLOCK');
+
+/** DB machine key is the signal (2nd Rough / 4th Finish); display machine is T_B_OP200. */
+const pressureMachineDisplayName = computed(() => AIR_HONING_MACHINE_NAME);
+
+const pressureSignalDisplayName = computed(() => {
+  const fromStore = machineSamplingWithLimitsStore.machine;
+  if (AIR_HONING_SIGNAL_NAMES.has(fromStore)) return fromStore;
+  const fromDisplay = machineSamplingWithLimitsStore.displayName
+    || machineSamplingWithLimitsStore.lastSelectedParameter?.displayName
+    || machineSamplingWithLimitsStore.lastSelectedParameter?.signal_name;
+  if (AIR_HONING_SIGNAL_NAMES.has(fromDisplay)) return fromDisplay;
+  return fromStore || '—';
+});
 
 const isPressureLogListLoading = ref(false);
 const isPressureGraphLoading = ref(false);
@@ -158,13 +168,6 @@ const baselineLogFileLabel = computed(() => {
   }
 
   return 'Baseline Active';
-});
-
-const baselineCycleDurationLabel = computed(() => {
-  if (!baselineLogFileId.value) return null;
-  const baselineRow = pressureLogFiles.value.find((item) => item.log_file_id === baselineLogFileId.value);
-  if (baselineRow?.cycle_duration_seconds == null) return null;
-  return formatOneDecimal(baselineRow.cycle_duration_seconds);
 });
 
 const canUpdateBaseline = computed(() => selectedPressureLogFileIds.value.length === 1);
@@ -645,7 +648,8 @@ async function savePressureLimits() {
   }
 }
 
-// Active KPI cards only (max 6 slots: 1 baseline + 5 runs). Baseline: no RMSE/status.
+// Active KPI cards (baseline + up to 5 runs).
+// Baseline: mean / peak / ripple / cycle duration. Runs: RMSE / status / cycle duration.
 const fourKpiSlots = computed(() => {
   const slots = [];
 
@@ -659,9 +663,12 @@ const fourKpiSlots = computed(() => {
       key: 'baseline',
       active: true,
       isBaseline: true,
-      badgeText: 'BASELINE RUN',
+      badgeText: 'BASELINE',
       timestamp: [formatProcessedDateOnly(bRow.time_stamp), formatProcessedTimeOnly(bRow.time_stamp)].filter(Boolean).join(' '),
-      duration: null,
+      mean: bRow.mean_pressure != null ? formatOneDecimal(bRow.mean_pressure) : null,
+      peak: bRow.peak_pressure != null ? formatOneDecimal(bRow.peak_pressure) : null,
+      ripple: bRow.pressure_ripple != null ? formatOneDecimal(bRow.pressure_ripple) : null,
+      duration: bRow.cycle_duration_seconds != null ? formatOneDecimal(bRow.cycle_duration_seconds) : null,
       rmse: null,
       status: null,
       color: 'rgb(185, 28, 28)',
@@ -687,6 +694,9 @@ const fourKpiSlots = computed(() => {
       isBaseline: false,
       badgeText: `RUN #${i + 1}`,
       timestamp: [formatProcessedDateOnly(sRow.time_stamp), formatProcessedTimeOnly(sRow.time_stamp)].filter(Boolean).join(' '),
+      mean: null,
+      peak: null,
+      ripple: null,
       duration: sRow.cycle_duration_seconds != null ? formatOneDecimal(sRow.cycle_duration_seconds) : null,
       rmse: sRow.rmse != null ? formatOneDecimal(sRow.rmse) : null,
       status: sRow.status || 'OK',
@@ -696,6 +706,14 @@ const fourKpiSlots = computed(() => {
 
   return slots;
 });
+
+function statusTagColor(status) {
+  const normalized = String(status || '').toUpperCase();
+  if (normalized === 'CRITICAL') return 'error';
+  if (normalized === 'WARNING') return 'warning';
+  if (normalized === 'OK') return 'success';
+  return 'default';
+}
 
 const handleBack = () => {
   const previous = navigationHistoryStore.history.length
@@ -766,9 +784,11 @@ onMounted(async () => {
         <div class="mls-top-card mls-top-card--location">
           <span class="mls-top-card-label">LOCATION & MACHINE</span>
           <div class="mls-breadcrumb-chips">
-            <span class="mls-chip-line">LINE: BLOCK</span>
+            <span class="mls-chip-line">LINE: {{ lineName }}</span>
             <span class="mls-chip-sep">&rsaquo;</span>
-            <span class="mls-chip-machine">MACHINE: {{ machineSamplingWithLimitsStore.machine }}</span>
+            <span class="mls-chip-machine">MACHINE: {{ pressureMachineDisplayName }}</span>
+            <span class="mls-chip-sep">&rsaquo;</span>
+            <span class="mls-chip-signal">SIGNAL: {{ pressureSignalDisplayName }}</span>
           </div>
         </div>
 
@@ -808,13 +828,6 @@ onMounted(async () => {
                   <span class="mls-card-badge mls-card-badge--red">BASELINE</span>
                   <span class="mls-card-ts-val" :class="{ 'mls-card-ts-val--none': !hasBaseline }">
                     {{ baselineLogFileLabel }}
-                  </span>
-                  <span
-                    v-if="baselineCycleDurationLabel != null"
-                    class="mls-baseline-cycle-chip"
-                    title="Baseline cycle duration"
-                  >
-                    {{ baselineCycleDurationLabel }}s
                   </span>
                 </div>
                 <button
@@ -1114,9 +1127,11 @@ onMounted(async () => {
               <span class="mls-head-divider">|</span>
               <div class="mls-head-meta">
                 <div class="mls-breadcrumb-chips">
-                  <span class="mls-chip-line">LINE: BLOCK</span>
+                  <span class="mls-chip-line">LINE: {{ lineName }}</span>
                   <span class="mls-chip-sep">&rsaquo;</span>
-                  <span class="mls-chip-machine">MACHINE: {{ machineSamplingWithLimitsStore.machine }}</span>
+                  <span class="mls-chip-machine">MACHINE: {{ pressureMachineDisplayName }}</span>
+                  <span class="mls-chip-sep">&rsaquo;</span>
+                  <span class="mls-chip-signal">SIGNAL: {{ pressureSignalDisplayName }}</span>
                 </div>
               </div>
             </div>
@@ -1126,7 +1141,7 @@ onMounted(async () => {
             </div>
           </div>
 
-          <!-- ── KPI row: fixed 6 columns (baseline + up to 5 runs); cards do not stretch ── -->
+          <!-- ── KPI row: baseline (mean/peak/ripple/duration) + runs (RMSE/status/duration) ── -->
           <div v-if="fourKpiSlots.length" class="mls-metrics-summary-bar">
             <div
               v-for="item in fourKpiSlots"
@@ -1138,7 +1153,7 @@ onMounted(async () => {
                 'mls-metric-card--rmse-crit': getRmseAlertStatus(item) === 'critical',
               }"
               :style="{
-                borderLeftColor: getRmseAlertStatus(item) === 'critical'
+                borderColor: getRmseAlertStatus(item) === 'critical'
                   ? '#dc2626'
                   : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color)
               }"
@@ -1150,15 +1165,32 @@ onMounted(async () => {
                     :style="{ background: getRmseAlertStatus(item) === 'critical' ? '#dc2626' : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color) }"
                   />
                   <span class="mls-metric-badge-text">{{ item.badgeText }}</span>
-                  <span v-if="!item.isBaseline && item.duration != null" class="mls-metric-duration-chip">
-                    {{ item.duration }}s
-                  </span>
                 </div>
                 <span class="mls-metric-ts">{{ item.timestamp }}</span>
               </div>
 
-              <!-- Baseline: no RMSE / status. Runs: RMSE + status from DB. -->
-              <div v-if="!item.isBaseline" class="mls-metric-card-grid">
+              <!-- Baseline: mean, peak, ripple, cycle duration -->
+              <div v-if="item.isBaseline" class="mls-metric-card-grid mls-metric-card-grid--baseline">
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">MEAN</span>
+                  <span class="mls-metric-val">{{ item.mean != null ? item.mean : '—' }}</span>
+                </div>
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">PEAK</span>
+                  <span class="mls-metric-val mls-metric-val--peak">{{ item.peak != null ? item.peak : '—' }}</span>
+                </div>
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">RIPPLE</span>
+                  <span class="mls-metric-val mls-metric-val--ripple">{{ item.ripple != null ? item.ripple : '—' }}</span>
+                </div>
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">CYCLE</span>
+                  <span class="mls-metric-val mls-metric-val--cycle">{{ item.duration != null ? `${item.duration}s` : '—' }}</span>
+                </div>
+              </div>
+
+              <!-- Runs: RMSE, status, cycle duration -->
+              <div v-else class="mls-metric-card-grid mls-metric-card-grid--run">
                 <div
                   class="mls-metric-stat"
                   :class="{ 'mls-stat--rmse-alert': getRmseAlertStatus(item) !== 'normal' }"
@@ -1175,21 +1207,21 @@ onMounted(async () => {
                     {{ item.rmse != null ? item.rmse : '—' }}
                   </span>
                 </div>
-                <div class="mls-metric-stat">
+                <div class="mls-metric-stat mls-metric-stat--status">
                   <span class="mls-metric-label">STATUS</span>
-                  <span class="mls-metric-val" :class="{
-                    'mls-rmse-val--crit': getRmseAlertStatus(item) === 'critical',
-                    'mls-rmse-val--warn': getRmseAlertStatus(item) === 'warning',
-                    'text-emerald-600': item.status && getRmseAlertStatus(item) === 'normal',
-                  }">
+                  <a-tag
+                    v-if="item.status"
+                    class="mls-status-tag"
+                    :color="statusTagColor(item.status)"
+                  >
                     {{ formatRunStatusLabel(item.status) }}
-                    <span v-if="getRmseAlertStatus(item) === 'critical'" class="mls-alert-pill mls-alert-pill--crit">CRIT</span>
-                    <span v-else-if="getRmseAlertStatus(item) === 'warning'" class="mls-alert-pill mls-alert-pill--warn">WARN</span>
-                  </span>
+                  </a-tag>
+                  <span v-else class="mls-metric-val">—</span>
                 </div>
-              </div>
-              <div v-else class="mls-metric-card-baseline-note">
-                Reference waveform
+                <div class="mls-metric-stat">
+                  <span class="mls-metric-label">CYCLE</span>
+                  <span class="mls-metric-val mls-metric-val--cycle">{{ item.duration != null ? `${item.duration}s` : '—' }}</span>
+                </div>
               </div>
             </div>
           </div>
@@ -1393,6 +1425,19 @@ onMounted(async () => {
   border-radius: 4px;
   font-family: 'Manrope', sans-serif;
   box-shadow: 0 1px 2px rgba(2, 132, 199, 0.08);
+}
+
+.mls-chip-signal {
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  background: #f5f3ff;
+  color: #6d28d9;
+  border: 1px solid #c4b5fd;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-family: 'Manrope', sans-serif;
 }
 
 .mls-text-warn { color: #d97706 !important; }
@@ -1720,14 +1765,10 @@ onMounted(async () => {
 /* ── RMSE Alert Highlighting in KPI Cards ── */
 .mls-metric-card--rmse-warn {
   background: #fffbeb !important;
-  border-color: #fcd34d !important;
-  border-left-color: #d97706 !important;
 }
 
 .mls-metric-card--rmse-crit {
   background: #fef2f2 !important;
-  border-color: #fca5a5 !important;
-  border-left-color: #dc2626 !important;
 }
 
 .mls-rmse-val--warn {
@@ -2212,9 +2253,10 @@ onMounted(async () => {
   grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 8px;
   padding: 8px 12px;
-  background: #ffffff;
-  border-bottom: 1px solid #cbd5e1;
+  background: #f8fafc;
+  border-bottom: 1px solid #e2e8f0;
   justify-items: stretch;
+  flex-shrink: 0;
 }
 
 .mls-metrics-summary-bar--empty {
@@ -2246,21 +2288,29 @@ onMounted(async () => {
 }
 
 .mls-metric-card {
-  background: #ffffff;
-  border: 1px solid #cbd5e1;
-  border-left: 3.5px solid #0284c7;
-  border-radius: 6px;
-  padding: 8px 10px;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.03);
+  background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%);
+  /* Same as the old top-only accent: 3px solid series color — now on every side */
+  border: 2px solid #0284c7;
+  border-radius: 8px;
+  padding: 10px 12px;
+  box-shadow: 0 2px 6px rgba(15, 23, 42, 0.05);
   display: flex;
   flex-direction: column;
-  justify-content: space-between;
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+.mls-metric-card:hover {
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.08);
+}
+
+.mls-metric-card--baseline {
+  background: linear-gradient(180deg, #fff7f7 0%, #ffffff 100%);
 }
 
 .mls-metric-card--inactive {
   background: #f8fafc !important;
   border: 1px dashed #cbd5e1 !important;
-  border-left: 3.5px solid #cbd5e1 !important;
   box-shadow: none !important;
 }
 
@@ -2268,39 +2318,29 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 6px;
+  gap: 4px;
   margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px dashed #e2e8f0;
 }
 
 .mls-metric-title-group {
   display: flex;
   align-items: center;
-  gap: 5px;
-}
-
-.mls-metric-duration-chip {
-  font-size: 9.5px;
-  font-weight: 800;
-  font-family: 'JetBrains Mono', monospace;
-  background: #f0f9ff;
-  color: #0284c7;
-  border: 1px solid #bae6fd;
-  padding: 0px 5px;
-  border-radius: 3px;
-  line-height: 1.25;
+  gap: 4px;
 }
 
 .mls-metric-indicator {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
 }
 
 .mls-metric-badge-text {
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
   color: #334155;
   font-family: 'Manrope', sans-serif;
@@ -2312,9 +2352,13 @@ onMounted(async () => {
 
 .mls-metric-ts {
   font-family: 'JetBrains Mono', 'Roboto Mono', monospace;
-  font-size: 10.5px;
+  font-size: 9px;
   font-weight: 600;
   color: #64748b;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 55%;
 }
 
 .mls-metric-card--inactive .mls-metric-ts {
@@ -2324,16 +2368,34 @@ onMounted(async () => {
 
 .mls-metric-card-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 0;
-  margin-top: 2px;
+  margin-top: 0;
+}
+
+.mls-metric-card-grid--baseline {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.mls-metric-card-grid--run {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .mls-metric-stat {
   display: flex;
   flex-direction: column;
-  padding: 0 8px;
+  padding: 0 6px;
   border-right: 1px solid #e2e8f0;
+  min-width: 0;
+}
+
+.mls-metric-card-grid--run .mls-metric-stat,
+.mls-metric-card-grid--baseline .mls-metric-stat {
+  border-right: 1px solid #e2e8f0;
+}
+
+.mls-metric-card-grid--run .mls-metric-stat:last-child,
+.mls-metric-card-grid--baseline .mls-metric-stat:last-child {
+  border-right: none;
 }
 
 .mls-metric-stat:first-child {
@@ -2341,8 +2403,11 @@ onMounted(async () => {
 }
 
 .mls-metric-stat:last-child {
-  border-right: none;
   padding-right: 0;
+}
+
+.mls-metric-stat--status {
+  align-items: flex-start;
 }
 
 .mls-metric-card--inactive .mls-metric-stat {
@@ -2357,6 +2422,7 @@ onMounted(async () => {
   color: #64748b;
   font-family: 'Manrope', sans-serif;
   margin-bottom: 1px;
+  line-height: 1.1;
 }
 
 .mls-metric-card--inactive .mls-metric-label {
@@ -2368,10 +2434,25 @@ onMounted(async () => {
   font-size: 12px;
   font-weight: 700;
   color: #0f172a;
+  line-height: 1.15;
 }
+
+.mls-metric-val--peak { color: #d97706; }
+.mls-metric-val--ripple { color: #7c3aed; }
+.mls-metric-val--cycle { color: #0284c7; }
 
 .mls-metric-card--inactive .mls-metric-val {
   color: #cbd5e1 !important;
+}
+
+.mls-status-tag {
+  margin: 0 !important;
+  font-size: 9px !important;
+  font-weight: 800 !important;
+  letter-spacing: 0.04em;
+  line-height: 1.3 !important;
+  border-radius: 3px !important;
+  padding: 0 4px !important;
 }
 
 /* ════════════════════════════════════════
@@ -2467,7 +2548,7 @@ onMounted(async () => {
   display: flex;
   flex-direction: column;
   position: relative;
-  padding: 10px;
+  padding: 6px 8px 8px;
   background: #f8fafc;
   overflow: hidden;
 }
@@ -2482,7 +2563,7 @@ onMounted(async () => {
   border-radius: 3px;
   box-shadow: 0 2px 8px rgba(15, 23, 42, 0.04);
   overflow: hidden;
-  padding: 6px 6px 2px 6px;
+  padding: 4px;
 }
 
 .mls-graph-canvas-box :deep(.dygraph-chart-panel) {
@@ -2495,24 +2576,31 @@ onMounted(async () => {
 
 .mls-graph-canvas-box :deep(.dygraph-chart-body) {
   flex: 1;
-  min-height: 0;
-  height: 100%;
-  padding: 4px 8px 12px 2px;
+  min-height: 0 !important;
+  height: auto;
+  padding: 2px 4px 2px 0 !important;
 }
 
 .mls-graph-canvas-box :deep(.dygraph-chart-plot-area) {
   flex: 1;
-  min-height: 0;
-  height: 100%;
+  min-height: 0 !important;
+  height: auto;
   border: none !important;
   box-shadow: none !important;
-  padding: 4px 6px 14px 4px;
+  padding: 2px 4px 2px 2px !important;
 }
 
 .mls-graph-canvas-box :deep(.dygraph-chart-canvas) {
   flex: 1;
   min-height: 0;
-  height: 100%;
+  height: 100% !important;
+  width: 100%;
+}
+
+.mls-graph-canvas-box :deep(.dygraph-chart-canvas > div),
+.mls-graph-canvas-box :deep(.dygraph-chart-canvas canvas) {
+  width: 100% !important;
+  height: 100% !important;
 }
 
 .mls-graph-placeholder {

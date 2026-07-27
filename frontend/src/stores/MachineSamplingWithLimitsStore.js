@@ -414,6 +414,9 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
           displayName: this.displayName,
           actualParameterName: this.actualParameterName,
           isPressureMachine: this.isPressureMachine,
+          lineName: this.lineName,
+          line_name: this.line_name,
+          line: this.line,
           selectedDates: { ...this.selectedDates },
           lastSelectedParameter: this.lastSelectedParameter,
         };
@@ -437,6 +440,12 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         this.displayName = payload.displayName || this.displayName;
         this.actualParameterName = payload.actualParameterName || this.actualParameterName;
         this.isPressureMachine = !!payload.isPressureMachine;
+        if (payload.lineName || payload.line_name || payload.line) {
+          const line = payload.lineName || payload.line_name || payload.line;
+          this.lineName = line;
+          this.line_name = line;
+          this.line = line;
+        }
         if (payload.selectedDates?.from && payload.selectedDates?.to) {
           this.selectedDates = {
             from: Number(payload.selectedDates.from),
@@ -456,6 +465,12 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
       this.machine = details.machine;
       this.actualParameterName = details.actualParameterName;
       this.parameterGroup = details.parameterGroup;
+      if (details.lineName || details.line_name || details.line) {
+        const line = details.lineName || details.line_name || details.line;
+        this.lineName = line;
+        this.line_name = line;
+        this.line = line;
+      }
       const group = (details.parameterGroup || '').toUpperCase();
       const param = (details.actualParameterName || '').toUpperCase();
       this.isPressureMachine = (
@@ -464,7 +479,15 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         || group === 'AIR_PRESSURE'
         || param === 'AIR_PRESSURE'
       );
-      if (this.isPressureMachine && details.displayName) {
+      if (this.isPressureMachine) {
+        const signalName = details.displayName
+          || details.signal_name
+          || details.signalName
+          || '';
+        if (signalName) {
+          this.displayName = signalName;
+        }
+      } else if (details.displayName) {
         this.displayName = details.displayName;
       }
       if (this.isPressureMachine && details.initializePressureDates !== false) {
@@ -480,6 +503,10 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
         machine: this.machine,
         actualParameterName: this.actualParameterName,
         parameterGroup: this.parameterGroup,
+        displayName: this.displayName,
+        lineName: this.lineName,
+        line_name: this.line_name,
+        line: this.line,
         isPressureMachine: this.isPressureMachine,
         is_pressure_machine: this.isPressureMachine,
       };

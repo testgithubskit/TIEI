@@ -129,7 +129,7 @@
                         'text-slate-400': alert.state === 'DISCONNECTED'
                       }"
                     >
-                      {{ alert.value }}{{ alert.paramDetails?.unit_short_name ? ' ' + alert.paramDetails.unit_short_name : '' }}
+                      {{ alert.value }}{{ alert.unit ? ' ' + alert.unit : '' }}
                     </td>
                   </tr>
                 </tbody>
@@ -597,7 +597,7 @@
                     <div class="text-[8px] font-black uppercase tracking-wider noc-telemetry-label">VALUE</div>
                     <div class="text-base font-black font-mono tracking-tight leading-none mt-1"
                          :class="'noc-value-' + param.parameter_state.toLowerCase()">
-                      {{ param.parameter_value !== null ? param.parameter_value : 'N/A' }}
+                      {{ formatParameterDisplayValue(param) }}
                     </div>
                   </div>
                   <div class="flex flex-col justify-center pl-3">
@@ -1002,7 +1002,7 @@ function combineAirHoningSignals(rawMachines, lineName) {
       : highestState;
   }, 'OK');
   const combinedMachine = {
-    machine_name: 'Air Honing',
+    machine_name: 'T_B_OP200',
     machine_state: machineState,
     lineName,
     parameters,
@@ -1066,17 +1066,26 @@ const allAlerts = computed(() => {
       // Check individual parameters for WARNING/CRITICAL only (not DISCONNECTED)
       (m.parameters || []).forEach(p => {
         if (p.parameter_state === 'WARNING' || p.parameter_state === 'CRITICAL') {
+          const isPressure = (
+            p.is_pressure_machine === true
+            || p.parameter_group === 'AIR_PRESSURE'
+            || p.actual_parameter_name === 'AIR_PRESSURE'
+            || m.is_combined_air_honing === true
+          );
           alerts.push({
-            machineName: p.source_machine_name || m.machine_name,
+            // Combined air honing machine is T_B_OP200; signals stay on the param
+            machineName: isPressure ? (m.machine_name || 'T_B_OP200') : (p.source_machine_name || m.machine_name),
             lineName: m.lineName || line.name,
             group: p.parameter_group || 'Unknown Group',
-            // Pressure machines have no axis — never fall back to AIR_PRESSURE / AP
-            displayName: (p.is_pressure_machine || p.parameter_group === 'AIR_PRESSURE')
+            // Pressure: no axis column
+            displayName: isPressure
               ? ''
               : (p.display_name || ''),
-            value: p.parameter_value !== null ? p.parameter_value : 'N/A',
+            value: formatParameterDisplayValue(p, isPressure),
+            unit: isPressure ? '' : (p.unit_short_name || ''),
             state: p.parameter_state,
-            paramDetails: p
+            paramDetails: p,
+            isPressure,
           });
         }
       });
@@ -1282,6 +1291,20 @@ function formatMachineName(name) {
   return name.startsWith('T_') ? name.substring(2) : name;
 }
 
+/** Air pressure: 2 decimals + Pa (frontend-only unit). Others: raw value. */
+function formatParameterDisplayValue(param, isPressure = false) {
+  const raw = param?.parameter_value;
+  if (raw === null || raw === undefined || raw === '') return 'N/A';
+  const pressure = isPressure
+    || param?.is_pressure_machine === true
+    || param?.parameter_group === 'AIR_PRESSURE'
+    || param?.actual_parameter_name === 'AIR_PRESSURE';
+  if (!pressure) return raw;
+  const num = Number(raw);
+  if (!Number.isFinite(num)) return raw;
+  return `${num.toFixed(2)} Pa`;
+}
+
 function getMachineIcon(machine) {
   return isAirHoningMachine(machine) ? machineHonSvg : machineSvg;
 }
@@ -1433,15 +1456,24 @@ function logParameterDetails(param, machineName, parameterGroup, isPressureMachi
   );
 
   const details = {
-    machine: machineName,
+    machine: isPressure
+      ? (param.signal_name || param.source_machine_name || machineName)
+      : machineName,
     actualParameterName: isPressure ? 'AIR_PRESSURE' : param.actual_parameter_name,
     parameterGroup: isPressure ? 'AIR_PRESSURE' : (param.parameter_group || parameterGroup),
-    displayName: isPressure ? '' : param.display_name,
+    displayName: isPressure
+      ? (param.signal_name || param.source_machine_name || machineName || '')
+      : param.display_name,
     latest_update_time: param.latest_update_time,
     latest_update_time_ms: param.latest_update_time_ms,
     isPressureMachine: isPressure,
     is_pressure_machine: isPressure,
   };
+  if (isPressure) {
+    details.lineName = 'BLOCK';
+    details.line_name = 'BLOCK';
+    details.line = 'BLOCK';
+  }
   machineSamplingWithLimitsStore.setMachineDetails(details);
   machineSamplingWithLimitsStore.setLastSelectedParameter(details);
   navigationHistoryStore.addToHistory(router.currentRoute.value);

@@ -388,7 +388,50 @@ const fetchCycleTimeData = async () => {
   }
 };
 
+const CYCLE_TIME_MAX_RANGE_MS = 7 * 24 * 60 * 60 * 1000; // 1 week
+
 const handleCycleTimeSubmit = async () => {
+  syncDatesFromPickers();
+
+  const fromMs = Number(machineSamplingWithLimitsStore.selectedDates.from);
+  const toMs = Number(machineSamplingWithLimitsStore.selectedDates.to);
+
+  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) {
+    Toastify({
+      text: 'Please select a valid From and To time range.',
+      duration: 4000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'red',
+    }).showToast();
+    return;
+  }
+
+  if (toMs < fromMs) {
+    Toastify({
+      text: 'To time must be after From time.',
+      duration: 4000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'red',
+    }).showToast();
+    return;
+  }
+
+  if (toMs - fromMs > CYCLE_TIME_MAX_RANGE_MS) {
+    Toastify({
+      text: 'For Cycle Time, the selected range cannot exceed 1 week. Please narrow From / To.',
+      duration: 5000,
+      close: true,
+      gravity: 'top',
+      position: 'right',
+      backgroundColor: 'red',
+    }).showToast();
+    return;
+  }
+
   await fetchCycleTimeData();
 };
 
@@ -593,6 +636,12 @@ function OnHoverCallBack(hoverData){
 
           <div class="flex flex-col items-center justify-end ml-8">
             <BaseButton type="submit" color="info" label="Submit" @click="handleQuerySubmit" />
+            <span
+              v-if="isCycleTimeSelected"
+              class="mt-1 text-[11px] font-semibold text-slate-500"
+            >
+              Max range: 1 week
+            </span>
           </div>
 
           <div v-if="isCycleTimeSelected && cycleTimeData" class="ml-8 flex flex-col justify-center">

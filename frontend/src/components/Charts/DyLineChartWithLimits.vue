@@ -927,18 +927,52 @@ function syncChart() {
   });
   isZoomed.value = false;
   preservedWindow.value = null;
-  nextTick(() => bindWheelListeners());
+  nextTick(() => {
+    bindWheelListeners();
+    setupResizeObserver();
+    try {
+      chart.value?.resize();
+    } catch (_) {
+      // ignore
+    }
+  });
 }
 
 onMounted(() => {
   watch(dataFingerprint, () => {
     syncChart();
   }, { immediate: true });
-  nextTick(() => bindWheelListeners());
+  nextTick(() => {
+    bindWheelListeners();
+    setupResizeObserver();
+  });
 });
+
+let resizeObserver = null;
+
+function setupResizeObserver() {
+  const target = plotArea.value || chartContainer.value;
+  if (!target || typeof ResizeObserver === 'undefined') {
+    return;
+  }
+  resizeObserver?.disconnect();
+  resizeObserver = new ResizeObserver(() => {
+    if (!chart.value) return;
+    try {
+      chart.value.resize();
+    } catch (_) {
+      // chart may be mid-destroy
+    }
+  });
+  resizeObserver.observe(target);
+}
 
 onBeforeUnmount(() => {
   unbindWheelListeners();
+  if (resizeObserver) {
+    resizeObserver.disconnect();
+    resizeObserver = null;
+  }
   if (chart.value) {
     chart.value.destroy();
     chart.value = null;
@@ -1213,8 +1247,8 @@ onBeforeUnmount(() => {
 .dygraph-chart-body {
   display: flex;
   align-items: stretch;
-  min-height: 320px;
-  padding: 4px 12px 18px 4px;
+  min-height: 0;
+  padding: 2px 8px 4px 2px;
   flex: 1;
 }
 
@@ -1236,16 +1270,16 @@ onBeforeUnmount(() => {
   position: relative;
   flex: 1;
   min-width: 0;
-  min-height: 300px;
+  min-height: 0;
   border: 1px solid #e2e8f0;
   border-radius: 3px;
   background: #ffffff;
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05);
   box-sizing: border-box;
-  overflow: visible;
+  overflow: hidden;
   display: flex;
   flex-direction: column;
-  padding: 8px 8px 18px 6px;
+  padding: 4px 6px 4px 4px;
 }
 
 .dygraph-chart-plot-area--wheel {
@@ -1256,7 +1290,7 @@ onBeforeUnmount(() => {
   width: 100%;
   flex: 1;
   min-height: 0;
-  height: auto;
+  height: 100%;
   box-sizing: border-box;
   border-radius: 3px;
   background: #ffffff;

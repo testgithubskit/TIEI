@@ -361,12 +361,19 @@ const handleMachineParameterClick = async (clickedParameter) => {
     machine: clickedParameter.machineName,
     actualParameterName: isPressureClick ? 'AIR_PRESSURE' : clickedParameter.actualParameterName,
     parameterGroup: isPressureClick ? 'AIR_PRESSURE' : selectedGroup,
-    displayName: isPressureClick ? '' : (clickedParameter.displayName || ''),
+    displayName: isPressureClick
+      ? (clickedParameter.displayName || clickedParameter.machineName || '')
+      : (clickedParameter.displayName || ''),
     isPressureMachine: isPressureClick,
     is_pressure_machine: isPressureClick,
     latest_update_time: clickedParameter.latest_update_time,
     latest_update_time_ms: clickedParameter.latest_update_time_ms,
   };
+  if (isPressureClick) {
+    machineDetails.lineName = 'BLOCK';
+    machineDetails.line_name = 'BLOCK';
+    machineDetails.line = 'BLOCK';
+  }
 
   machineSamplingWithLimitsStore.setMachineDetails(machineDetails);
   machineSamplingWithLimitsStore.setLastSelectedParameter(machineDetails);

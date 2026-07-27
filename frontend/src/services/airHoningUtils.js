@@ -13,7 +13,7 @@ export function isAirHoningSignalMachine(machine) {
 }
 
 /**
- * Merge 2nd Rough / 4th Finish into a single Air Honing machine with two signals.
+ * Merge 2nd Rough / 4th Finish into a single T_B_OP200 machine with two signals.
  */
 export function combineAirHoningSignals(rawMachines = []) {
   const machines = Array.isArray(rawMachines) ? rawMachines : [];
@@ -58,7 +58,7 @@ export function combineAirHoningSignals(rawMachines = []) {
   }, 'OK');
 
   const combinedMachine = {
-    machine_name: 'Air Honing',
+    machine_name: 'T_B_OP200',
     machine_state: machineState,
     parameters,
     is_pressure_machine: true,
