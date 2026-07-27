@@ -520,7 +520,7 @@ const dashboardButton = computed(() => {
       <div class="w-full flex flex-col space-y-1">
         <div class="w-8 h-8">
           <!-- Add your loading SVG icon here -->
-          <img v-if="isLoading" src="@\assets\gifs\Loading.gif" alt="Loading...">
+          <svg v-if="isLoading" class="animate-spin h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
         </div>
 
         <ParameterWithDropDown class="col-span-3" :icon="mdiChartTimelineVariant" title="Parameter:" main>

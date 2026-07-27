@@ -2,16 +2,23 @@ version: '3.8'
 
 services:
   backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     image: toyota-backend:v1
     container_name: toyota-backend
+    env_file:
+      - ./backend/configs/.env
     ports:
       - "3003:3003"
-    # Uses ENV baked into the image (backend/Dockerfile) — no host .env required
     networks:
       - toyota-network
     restart: unless-stopped
 
   frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     image: toyota-frontend:v1
     container_name: toyota-frontend
     ports:
