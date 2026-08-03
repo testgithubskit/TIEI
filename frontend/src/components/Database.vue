@@ -19,7 +19,7 @@
   // Computed property to display different text based on schemaName
   const displaySchemaName = computed(() => {
     const schemaName = DatabaseName.schemaName;
-    if (schemaName === 'tiei_sample_4') {
+    if (schemaName === 'tiei_sample_5') {
       return 'TNGA PLANT';
     } else if (schemaName === 'tiei_gd_plant_1') {
       return 'GD PLANT';

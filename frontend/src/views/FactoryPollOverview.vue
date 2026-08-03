@@ -483,7 +483,7 @@ const dashboardButton = computed(() => {
       text: "Open TNGA Dashboard",
       link: window.location.origin + "/tiei_dynamic/#/factory-level-polling/parameter-overview/grid"
     };
-  } else if (DatabaseName.schemaName === "tiei_sample_4") {
+  } else if (DatabaseName.schemaName === "tiei_sample_5") {
     return {
       text: "Open GD Dashboard",
       link: window.location.origin + "/tiei_dynamic_gd/#/factory-level-polling/parameter-overview/grid"
@@ -519,8 +519,7 @@ const dashboardButton = computed(() => {
     <SectionMain class="factory-poll-section">
       <div class="w-full flex flex-col space-y-1">
         <div class="w-8 h-8">
-          <!-- Add your loading SVG icon here -->
-          <svg v-if="isLoading" class="animate-spin h-8 w-8 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/></svg>
+          <div v-if="isLoading" class="w-8 h-8 border-4 border-gray-200 border-t-blue-500 rounded-full animate-spin"></div>
         </div>
 
         <ParameterWithDropDown class="col-span-3" :icon="mdiChartTimelineVariant" title="Parameter:" main>

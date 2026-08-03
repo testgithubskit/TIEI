@@ -453,6 +453,10 @@
                 :style="{ color: svgColors.hudText }"
                 aria-label="Machine state color legend"
               >
+                 <span class="noc-state-legend__item">
+                  <span class="noc-state-legend__swatch noc-state-legend__swatch--ok"></span>
+                  OK
+                </span>
                 <span class="noc-state-legend__item">
                   <span class="noc-state-legend__swatch noc-state-legend__swatch--warning"></span>
                   Warning
@@ -2769,6 +2773,12 @@ onBeforeUnmount(() => {
   border: 1px solid rgba(255, 255, 255, 0.4);
   border-radius: 2px;
   box-shadow: 0 0 5px currentColor;
+}
+
+
+.noc-state-legend__swatch--ok {
+  color: #22c55e;
+  background: #22c55e;
 }
 
 .noc-state-legend__swatch--warning {
