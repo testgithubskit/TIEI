@@ -7327,6 +7327,68 @@ def get_real_time_layout_data():
     return response
 
 
+@db_session
+def get_pending_alerts_overview():
+    """Uncleared Parameter Activity rows for the managerial dashboard pending tab.
+
+    Pending lives in CorrectiveActivity until completed (moved to ActivityHistory).
+    """
+    pending_rows = select(
+        (mc.location,
+         mc.name,
+         pg.group_name,
+         mp.name,
+         mp.display_name,
+         mp.internal_parameter_name,
+         coract.recent_value,
+         coract.parameter_condition.name,
+         mp.unit.short_name,
+         pg.parameter_type)
+        for coract in CorrectiveActivity
+        for mp in MachineParameter
+        for pg in ParameterGroup
+        for mc in Machine
+        if (
+            coract.machine_parameter == mp
+            and mp.parameter_group == pg
+            and mp.machine == mc
+        )
+    )
+
+    pending = []
+    for row in pending_rows:
+        (
+            location, machine_name, group_name, parameter_name, display_name,
+            internal_parameter_name, recent_value, condition, unit_short_name, parameter_type
+        ) = row
+        if condition not in ('WARNING', 'CRITICAL'):
+            continue
+        if recent_value is not None and isinstance(recent_value, float) and math.isnan(recent_value):
+            recent_value = None
+        pending.append({
+            'line_name': location,
+            'machine_name': machine_name,
+            'parameter_group': group_name,
+            'actual_parameter_name': parameter_name,
+            'display_name': display_name or '',
+            'internal_parameter_name': internal_parameter_name,
+            'parameter_value': recent_value,
+            'parameter_state': condition,
+            'unit_short_name': unit_short_name,
+            'parameter_type': parameter_type,
+            'is_pressure_machine': (
+                group_name == PRESSURE_PARAMETER_GROUP
+                or parameter_name == PRESSURE_PARAMETER_NAME
+            ),
+        })
+
+    pending.sort(key=lambda item: (
+        0 if item['parameter_state'] == 'CRITICAL' else 1,
+        item['machine_name'] or '',
+    ))
+    return {'pending': pending}
+
+
 @db_session(optimistic=False)
 def get_real_time_parameters_data_mtlinki_new_layout():
     # Get the PostgreSQL data

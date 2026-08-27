@@ -45,13 +45,26 @@
             </div>
           </div>
 
-          <!-- ── Alert Feed Label ── -->
-          <div class="noc-section-label">
-            <svg class="w-3 h-3 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m-9.303 3.376c-.866 1.5.217 3.374 1.948 3.374h14.71c1.73 0 2.813-1.874 1.948-3.374L13.949 3.378c-.866-1.5-3.032-1.5-3.898 0L2.697 16.126zM12 15.75h.007v.008H12v-.008z"/>
-            </svg>
-            ACTIVE ALERTS
-            <span class="noc-alert-count">{{ totalWarning + totalCritical }}</span>
+          <!-- ── Alert Tabs ── -->
+          <div class="noc-alert-tabs flex-shrink-0">
+            <button
+              type="button"
+              class="noc-alert-tab"
+              :class="{ active: alertTab === 'active' }"
+              @click="selectAlertTab('active')"
+            >
+              ACTIVE ALERTS
+              <span class="noc-alert-count">{{ allAlerts.length }}</span>
+            </button>
+            <button
+              type="button"
+              class="noc-alert-tab"
+              :class="{ active: alertTab === 'pending' }"
+              @click="selectAlertTab('pending')"
+            >
+              PENDING ALERTS
+              <span class="noc-alert-count">{{ pendingAlerts.length }}</span>
+            </button>
           </div>
 
           <div class="noc-filters px-3 py-2 flex gap-2 overflow-x-auto" :class="panelTheme === 'dark' ? 'bg-[#0f1923] border-b border-[#334155]' : 'bg-[#f1f5f9] border-b border-[#e2e8f0]'">
@@ -72,8 +85,8 @@
                   <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
                 </svg>
               </div>
-              <span class="font-bold">All machines nominal</span>
-              <span class="text-[10px] opacity-70 mt-1">No alerts for current filter.</span>
+              <span class="font-bold">{{ alertTab === 'pending' ? 'No pending alerts' : 'All machines nominal' }}</span>
+              <span class="text-[10px] opacity-70 mt-1">{{ alertTab === 'pending' ? 'No uncleared activities for current filter.' : 'No alerts for current filter.' }}</span>
             </div>
 
             <!-- One table for all lines so parameter dividers align to the longest name -->
@@ -658,6 +671,7 @@ import { useFactoryPollOverviewStore } from '../stores/FactoryPollGridStore';
 import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore'; 
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { useDatabaseName } from '@/stores/DatabaseName';
+import { backendApi } from '@/services/apiServices';
 
 // MAIN ISOMETRIC CONFIGURATION
 import { CONFIG } from './ManagerialOverviewConfig';
@@ -790,6 +804,8 @@ const navigationHistoryStore = useNavigationHistoryStore();
 
 const svgRef = ref(null);
 const activeLine = ref(null);
+const alertTab = ref('active');
+const pendingAlertsRaw = ref([]);
 const selectedMachine = ref(null);
 const hoveredMachine = ref(null);
 const hasCachedFactoryData = () => (
@@ -798,7 +814,9 @@ const hasCachedFactoryData = () => (
 const isLoading = ref(!hasCachedFactoryData());
 const isRefreshing = computed(() => factoryStore.isLoading && !isLoading.value);
 const FACTORY_REFRESH_INTERVAL_MS = 5000;
+const PENDING_REFRESH_INTERVAL_MS = 30000;
 let factoryRefreshTimer = null;
+let pendingRefreshTimer = null;
 
 // ── Theme (dark / light) ──
 const panelTheme = ref('dark');
@@ -1108,9 +1126,59 @@ const allAlerts = computed(() => {
   return alerts;
 });
 
+const pendingAlerts = computed(() => {
+  const alerts = (pendingAlertsRaw.value || []).map((p) => {
+    const isPressure = (
+      p.is_pressure_machine === true
+      || p.parameter_group === 'AIR_PRESSURE'
+      || p.actual_parameter_name === 'AIR_PRESSURE'
+      || AIR_HONING_SIGNAL_NAMES.has(p.machine_name)
+    );
+    return {
+      machineName: isPressure
+        ? (AIR_HONING_SIGNAL_NAMES.has(p.machine_name) ? 'T_B_OP200' : p.machine_name)
+        : p.machine_name,
+      lineName: p.line_name,
+      group: p.parameter_group || 'Unknown Group',
+      displayName: isPressure ? '' : (p.display_name || ''),
+      value: formatParameterDisplayValue({
+        parameter_value: p.parameter_value,
+        actual_parameter_name: p.actual_parameter_name,
+        parameter_group: p.parameter_group,
+        is_pressure_machine: isPressure,
+      }, isPressure),
+      unit: isPressure ? '' : (p.unit_short_name || ''),
+      state: p.parameter_state,
+      paramDetails: {
+        actual_parameter_name: p.actual_parameter_name,
+        display_name: p.display_name,
+        parameter_group: p.parameter_group,
+        is_pressure_machine: isPressure,
+        source_machine_name: p.machine_name,
+        signal_name: p.machine_name,
+      },
+      isPressure,
+    };
+  });
+
+  alerts.sort((a, b) => {
+    const statePriority = { 'CRITICAL': 0, 'WARNING': 1 };
+    const priorityA = statePriority[a.state] ?? 2;
+    const priorityB = statePriority[b.state] ?? 2;
+    if (priorityA !== priorityB) return priorityA - priorityB;
+    return a.machineName.localeCompare(b.machineName);
+  });
+
+  return alerts;
+});
+
+const sourceAlerts = computed(() => (
+  alertTab.value === 'pending' ? pendingAlerts.value : allAlerts.value
+));
+
 const filteredAlerts = computed(() => {
-  if (!activeLine.value) return allAlerts.value;
-  return allAlerts.value.filter(a => a.lineName === activeLine.value);
+  if (!activeLine.value) return sourceAlerts.value;
+  return sourceAlerts.value.filter(a => a.lineName === activeLine.value);
 });
 
 const groupedAlerts = computed(() => {
@@ -1509,6 +1577,22 @@ const refreshFactoryData = async ({ fitAfterLoad = false } = {}) => {
   }
 };
 
+const fetchPendingAlerts = async () => {
+  try {
+    const response = await backendApi.get('/factory/pending-alerts');
+    pendingAlertsRaw.value = response.data?.pending || [];
+  } catch (error) {
+    console.error('Failed to fetch pending alerts:', error);
+  }
+};
+
+function selectAlertTab(tab) {
+  alertTab.value = tab;
+  if (tab === 'pending') {
+    void fetchPendingAlerts();
+  }
+}
+
 onMounted(async () => {
   const hadCachedData = hasCachedFactoryData();
 
@@ -1529,17 +1613,27 @@ onMounted(async () => {
     isLoading.value = false;
   }
 
+  void fetchPendingAlerts();
+
   // Attempt a refresh every five seconds. The store skips a tick when the
   // previous slow request is still in flight, preventing request overlap.
   factoryRefreshTimer = window.setInterval(() => {
     void refreshFactoryData();
   }, FACTORY_REFRESH_INTERVAL_MS);
+
+  pendingRefreshTimer = window.setInterval(() => {
+    void fetchPendingAlerts();
+  }, PENDING_REFRESH_INTERVAL_MS);
 });
 
 onBeforeUnmount(() => {
   if (factoryRefreshTimer !== null) {
     window.clearInterval(factoryRefreshTimer);
     factoryRefreshTimer = null;
+  }
+  if (pendingRefreshTimer !== null) {
+    window.clearInterval(pendingRefreshTimer);
+    pendingRefreshTimer = null;
   }
 });
 </script>
@@ -1700,6 +1794,39 @@ onBeforeUnmount(() => {
   background: #0a0f16;
   border-bottom: 1px solid #334155;
   flex-shrink: 0;
+}
+.noc-alert-tabs {
+  display: flex;
+  background: #0a0f16;
+  border-bottom: 1px solid #334155;
+}
+.noc-alert-tab {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 8px 10px 7px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: #64748b;
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.noc-alert-tab:hover {
+  color: #94a3b8;
+}
+.noc-alert-tab.active {
+  color: #e2e8f0;
+  border-bottom-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.08);
+}
+.noc-alert-tab .noc-alert-count {
+  margin-left: 0;
 }
 .noc-alert-count {
   margin-left: auto;
@@ -2126,6 +2253,10 @@ onBeforeUnmount(() => {
 .noc-light .noc-warn-label   { color: #b45309; }
 .noc-light .noc-crit-label   { color: #b91c1c; }
 .noc-light .noc-section-label { background: #f1f5f9; border-bottom-color: #e2e8f0; color: #94a3b8; }
+.noc-light .noc-alert-tabs { background: #f1f5f9; border-bottom-color: #e2e8f0; }
+.noc-light .noc-alert-tab { color: #64748b; }
+.noc-light .noc-alert-tab:hover { color: #334155; }
+.noc-light .noc-alert-tab.active { color: #0f172a; border-bottom-color: #0284c7; background: rgba(2, 132, 199, 0.08); }
 .noc-light .noc-alert-count  { background: #e2e8f0; color: #64748b; }
 .noc-light .noc-feed         { background: #f8fafc; }
 .noc-light .noc-line-group   { border-bottom-color: #e2e8f0; }

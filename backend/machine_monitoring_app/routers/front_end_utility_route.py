@@ -29,7 +29,8 @@ from machine_monitoring_app.models.response_models import FactoryLayout, Factory
      new_ResponseModel
 
 from machine_monitoring_app.database.crud_operations import get_real_time_parameters_data, \
-    get_real_time_parameters_data_mtlinki, get_real_time_layout_data, get_real_time_parameters_data_mtlinki_new_layout
+    get_real_time_parameters_data_mtlinki, get_real_time_layout_data, get_real_time_parameters_data_mtlinki_new_layout, \
+    get_pending_alerts_overview
 
 from machine_monitoring_app.routers.router_dependencies import get_current_active_user
 
@@ -175,5 +176,20 @@ async def read_factory_layout_mtlinki():
         LOGGER.error(f"An unexpected error occurred: {error}")
 
         # Extract the error message for the client response
+        error_message = str(error)
+        raise HTTPException(status_code=500, detail={"error": error_message})
+
+
+@ROUTER.get("/factory/pending-alerts")
+async def read_factory_pending_alerts():
+    """Uncleared Parameter Activity rows for the managerial dashboard pending tab."""
+    start_time = time.time()
+    try:
+        response_data = get_pending_alerts_overview()
+        end_time = time.time() - start_time
+        LOGGER.info(f"Total Time Taken For this endpoint: {(round((end_time * 1000), 2))} ms")
+        return response_data
+    except Exception as error:
+        LOGGER.error(f"An unexpected error occurred: {error}")
         error_message = str(error)
         raise HTTPException(status_code=500, detail={"error": error_message})
