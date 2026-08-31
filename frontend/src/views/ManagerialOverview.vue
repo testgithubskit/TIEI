@@ -1069,12 +1069,73 @@ const uiLinesData = computed(() => {
   });
 });
 
+const pendingMachineStates = computed(() => {
+  const map = new Map();
+  pendingAlerts.value.forEach((alert) => {
+    const names = [
+      alert.machineName,
+      alert.paramDetails?.source_machine_name,
+      alert.paramDetails?.signal_name,
+    ].filter(Boolean);
+    names.forEach((name) => {
+      const keys = AIR_HONING_SIGNAL_NAMES.has(name) ? [name, 'T_B_OP200'] : [name];
+      keys.forEach((key) => {
+        const existing = map.get(key);
+        if (!existing || (MACHINE_STATE_PRIORITY[alert.state] || 0) > (MACHINE_STATE_PRIORITY[existing] || 0)) {
+          map.set(key, alert.state);
+        }
+      });
+    });
+  });
+  return map;
+});
+
+function resolvePendingMachineState(machine, pendingStates) {
+  const names = [
+    machine.machine_name,
+    ...(machine.parameters || []).map((p) => p.source_machine_name).filter(Boolean),
+    ...(machine.parameters || []).map((p) => p.signal_name).filter(Boolean),
+  ];
+  let worst = null;
+  names.forEach((name) => {
+    const key = AIR_HONING_SIGNAL_NAMES.has(name) ? 'T_B_OP200' : name;
+    const state = pendingStates.get(key) || pendingStates.get(name);
+    if (state && (!worst || (MACHINE_STATE_PRIORITY[state] || 0) > (MACHINE_STATE_PRIORITY[worst] || 0))) {
+      worst = state;
+    }
+  });
+  return worst;
+}
+
+const displayLinesData = computed(() => {
+  if (alertTab.value !== 'pending') return uiLinesData.value;
+  const pendingStates = pendingMachineStates.value;
+  return uiLinesData.value.map((line) => {
+    const machines = (line.machines || []).map((m) => {
+      const pendingState = resolvePendingMachineState(m, pendingStates);
+      let machine_state = 'OK';
+      if (pendingState === 'CRITICAL' || pendingState === 'WARNING') {
+        machine_state = pendingState;
+      } else if (m.machine_state === 'DISCONNECTED') {
+        machine_state = 'DISCONNECTED';
+      }
+      return { ...m, machine_state };
+    });
+    const counts = { OK: 0, WARNING: 0, CRITICAL: 0, DISCONNECTED: 0 };
+    machines.forEach((m) => {
+      const s = m.machine_state || 'OK';
+      if (counts[s] !== undefined) counts[s]++;
+    });
+    return { ...line, machines, counts };
+  });
+});
+
 // ── Computed metrics ──
-const totalMachines = computed(() => uiLinesData.value.reduce((s, l) => s + (l.machines || []).length, 0));
-const totalOk = computed(() => uiLinesData.value.reduce((s, l) => s + (l.counts.OK || 0), 0));
-const totalWarning = computed(() => uiLinesData.value.reduce((s, l) => s + (l.counts.WARNING || 0), 0));
-const totalCritical = computed(() => uiLinesData.value.reduce((s, l) => s + (l.counts.CRITICAL || 0), 0));
-const totalDisconnected = computed(() => uiLinesData.value.reduce((s, l) => s + (l.counts.DISCONNECTED || 0), 0));
+const totalMachines = computed(() => displayLinesData.value.reduce((s, l) => s + (l.machines || []).length, 0));
+const totalOk = computed(() => displayLinesData.value.reduce((s, l) => s + (l.counts.OK || 0), 0));
+const totalWarning = computed(() => displayLinesData.value.reduce((s, l) => s + (l.counts.WARNING || 0), 0));
+const totalCritical = computed(() => displayLinesData.value.reduce((s, l) => s + (l.counts.CRITICAL || 0), 0));
+const totalDisconnected = computed(() => displayLinesData.value.reduce((s, l) => s + (l.counts.DISCONNECTED || 0), 0));
 
 // ── Alert Panel Computed ──
 const availableLines = computed(() => {
@@ -1207,7 +1268,7 @@ const placedMachines = computed(() => {
   const perRow = CONFIG.machinesPerRow || 10;
   let currentU = 0;
 
-  uiLinesData.value.forEach(line => {
+  displayLinesData.value.forEach(line => {
     const machines = line.machines || [];
     const rows = Math.ceil(machines.length / perRow) || 1;
     machines.forEach((m, idx) => {
