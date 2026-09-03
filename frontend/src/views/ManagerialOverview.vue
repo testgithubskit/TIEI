@@ -5,7 +5,7 @@
       <div class="flex flex-1 gap-3 w-full h-full min-h-0">
         
         <!-- ================= LEFT CARD — NOC ALERT PANEL ================= -->
-        <div :class="['noc-panel', 'noc-' + panelTheme]" class="h-full flex flex-col overflow-hidden rounded-md" style="width: 28%;">
+        <div :class="['noc-panel', 'noc-' + panelTheme]" class="h-full flex flex-col overflow-hidden rounded-md" style="width: 30%;">
 
           <!-- ── NOC Header Bar ── -->
           <div class="noc-header flex-shrink-0">
@@ -144,6 +144,7 @@
                     >
                       {{ alert.value }}{{ alert.unit ? ' ' + alert.unit : '' }}
                     </td>
+                    <td class="noc-alert-spacer" aria-hidden="true"></td>
                   </tr>
                 </tbody>
               </table>
@@ -151,9 +152,9 @@
           </div>
         </div>
 
-        <!-- ================= RIGHT CARD (72% Width - Isometric SVG) ================= -->
+        <!-- ================= RIGHT CARD (70% Width - Isometric SVG) ================= -->
         <div class="h-full rounded-md shadow-sm flex flex-col overflow-hidden relative"
-             :style="{ width: '72%', background: svgColors.panelBg, border: '1px solid ' + svgColors.panelBorder }">
+             :style="{ width: '70%', background: svgColors.panelBg, border: '1px solid ' + svgColors.panelBorder }">
           
           <!-- ── Right View Header Bar ── -->
           <div class="flex-shrink-0 flex items-center justify-between px-5 py-2.5 border-b noc-right-header"
@@ -1258,7 +1259,7 @@ const groupedAlerts = computed(() => {
 });
 
 const hasAnyAlertAxis = computed(() => filteredAlerts.value.some((alert) => !!alert.displayName));
-const alertTableColSpan = computed(() => (hasAnyAlertAxis.value ? 7 : 5));
+const alertTableColSpan = computed(() => (hasAnyAlertAxis.value ? 8 : 6));
 
 // ── Machine placement ──
 const placedMachines = computed(() => {
@@ -2055,32 +2056,37 @@ onBeforeUnmount(() => {
 }
 
 .noc-machine-txt,
-.noc-display-txt {
+.noc-group-txt,
+.noc-display-txt,
+.noc-value-txt {
   width: 1%;
   white-space: nowrap;
 }
 
 .noc-group-txt {
-  width: auto;
-  white-space: nowrap;
-  padding-right: 10px !important;
+  padding-right: 4px !important;
 }
 
 .noc-display-txt {
-  min-width: 1.75rem;
+  min-width: 0;
+  padding-left: 1px !important;
+  padding-right: 1px !important;
   text-align: center !important;
 }
 
 .noc-value-txt {
-  width: 1%;
-  white-space: nowrap;
   text-align: right !important;
-  padding-right: 10px !important;
+  padding-right: 8px !important;
 }
 
 .noc-alert-vdivider-cell {
   width: 1px;
-  padding: 9px 5px !important;
+  padding: 9px 2px !important;
+}
+
+.noc-alert-spacer {
+  width: 99%;
+  padding: 0 !important;
 }
 
 .noc-alert-vdivider {
