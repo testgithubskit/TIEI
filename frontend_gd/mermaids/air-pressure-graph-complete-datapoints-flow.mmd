@@ -1,0 +1,37 @@
+flowchart TD
+  START["STEP 1 — User opens Air Pressure graph screen<br/>for one machine<br/>Example: 2nd Rough"]
+
+  LIST["STEP 2 — Load saved runs list<br/><br/>Read table: pressure_log_file<br/>Each row = one completed cycle/run<br/>Example: log_file_id 19, 20, 21, 22<br/><br/>Shown in left panel:<br/>timestamp, mean, peak, ripple, duration<br/><br/>One run may already be marked Baseline"]
+
+  SELECT["STEP 3 — User selects runs to compare<br/><br/>Rules:<br/>- Select up to 5 runs<br/>- Baseline is auto-included if configured<br/>- Baseline = reference good run<br/><br/>Example selection:<br/>Baseline = 20<br/>Compare = 21 and 22"]
+
+  LOOP["STEP 4 — For EACH selected run / baseline run<br/>prepare chart points separately<br/><br/>Source of points:<br/>pressure_sensor_data<br/>WHERE log_file_id = that run id"]
+
+  COUNT["STEP 5 — Count raw DB points for this run<br/><br/>raw_points = COUNT * from pressure_sensor_data<br/>for that log_file_id<br/><br/>Examples:<br/>100 / 300 / 500 / 3000 / 5000 / 50000"]
+
+  TARGET["STEP 6 — Remember chart target<br/><br/>visual_max / maxPoints = 3000<br/>This is how many points we want to SEND to graph<br/><br/>Important:<br/>3000 = display target<br/>400 = method switch threshold<br/>These are different numbers"]
+
+  DECIDE{"STEP 7 — Choose preparation method<br/><br/>Rule in code:<br/>use_bucket_avg =<br/>raw_points > min 400, visual_max<br/><br/>With visual_max = 3000:<br/>threshold = 400<br/><br/>raw_points > 400 ?"}
+
+  PATH_A["PATH A — SMALL RUN<br/>raw_points <= 400<br/><br/>Example: 100 points<br/><br/>Action 1:<br/>Load ALL real DB rows<br/>SELECT timestamp, pressure_value<br/>ORDER BY timestamp<br/><br/>Action 2:<br/>Convert to chart format<br/>[epoch_ms, pressure_value]<br/><br/>These are EXACT DB readings"]
+
+  LTTB_A["PATH A — Apply LTTB if needed<br/><br/>Method: LTTB<br/>Full name: Largest Triangle Three Buckets<br/><br/>What LTTB does:<br/>1. Keep first point<br/>2. Keep last point<br/>3. In middle, keep points that best protect shape<br/>   peaks and valleys<br/>4. Drop less important middle points<br/><br/>Important:<br/>LTTB keeps EXISTING points from the list<br/>It does NOT replace Y with average for final plot<br/><br/>If points already <= 3000:<br/>LTTB does NOTHING<br/><br/>Example 100 points:<br/>100 <= 3000 -> keep all 100 exact points"]
+
+  PATH_B["PATH B — BIG RUN<br/>raw_points > 400<br/><br/>Examples: 500, 3000, 5000, 50000<br/>ALL use this path because all > 400<br/><br/>Action 1: WIDTH BUCKET method<br/><br/>What WIDTH BUCKET does:<br/>1. Take all real DB points of this log_file_id<br/>2. Split the full run time into about 3000 time boxes<br/>3. In each box, compute AVG pressure_value<br/>4. Keep one point per box<br/>   time = box representative time<br/>   value = average of DB points in that box<br/><br/>Result:<br/>heavy data becomes about 3000 smoother points<br/><br/>Important:<br/>These chart points are DERIVED from DB<br/>by averaging real DB rows in each time slice<br/>Not fake data, but not 1-to-1 original rows either"]
+
+  LTTB_B["PATH B — Apply LTTB as safety polish<br/><br/>After width_bucket, pass points to LTTB<br/>with max = 3000<br/><br/>Why:<br/>If bucket output somehow still > 3000,<br/>LTTB reduces to about 3000 while keeping shape<br/><br/>If already about 3000:<br/>LTTB almost keeps them as-is"]
+
+  SERIES["STEP 8 — One run becomes one series object<br/><br/>Example for one run:<br/>- log_file_id<br/>- label / processed_time<br/>- baseline true/false<br/>- chart_data = final [time, pressure] list<br/>- raw_points = original DB count<br/>- returned_points = points sent to chart<br/>- downsampled = true/false"]
+
+  ALL["STEP 9 — Collect all series together<br/><br/>Example final payload series:<br/>1. Baseline run 20 chart_data<br/>2. Run 21 chart_data<br/>3. Run 22 chart_data<br/><br/>Also send warning_limit and critical_limit"]
+
+  UI["STEP 10 — Frontend draws final graph<br/><br/>Component: DyLineChartWithLimits<br/><br/>What is shown:<br/>- One colored line per series<br/>- Baseline usually red<br/>- Compare runs blue / purple / pink<br/>- Y axis = Air Pressure Pa<br/>- X axis = time / elapsed compare mode<br/><br/>Also UI can show:<br/>- KPI cards mean/peak/ripple/duration<br/>- RMSE of compare run vs baseline<br/>  using already prepared chart_data"]
+
+  FINAL["STEP 11 — What user actually sees on points<br/><br/>If run had <= 400 raw points:<br/>graph points are EXACT DB readings<br/><br/>If run had > 400 raw points:<br/>graph points are mostly WIDTH-BUCKET AVERAGES<br/>from real DB rows, then maybe LTTB polish<br/>final count about 3000<br/><br/>Zoom behavior TODAY:<br/>Zoom only magnifies already loaded points<br/>Zoom does NOT fetch exact DB rows again"]
+
+  MEM["FINAL MEMORY CARD<br/><br/>1. Runs come from pressure_log_file<br/>2. Points come from pressure_sensor_data by log_file_id<br/>3. Count raw_points<br/>4. <=400 -> real DB points + LTTB only if needed<br/>5. >400 -> WIDTH BUCKET AVG to ~3000 + LTTB safety<br/>6. 3000 = max points on graph<br/>7. 400 = when averaging method starts<br/>8. Final graph shows prepared series lines for baseline + selected runs<br/>9. Zoom is visual only on those prepared points"]
+
+  START --> LIST --> SELECT --> LOOP --> COUNT --> TARGET --> DECIDE
+  DECIDE -->|"NO <= 400<br/>SMALL PATH"| PATH_A --> LTTB_A --> SERIES
+  DECIDE -->|"YES > 400<br/>BIG PATH"| PATH_B --> LTTB_B --> SERIES
+  SERIES --> ALL --> UI --> FINAL --> MEM

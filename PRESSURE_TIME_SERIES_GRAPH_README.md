@@ -3,7 +3,7 @@
 This document explains **everything implemented** for the **AIR_PRESSURE** (air honing) pressure graph: what changed, why, which files were touched, how time ranges work, how large data is handled, and how the chart behaves in the browser.
 
 **Machines:** `2nd Rough`, `4th Finish` (BLOCK line)  
-**Database schema:** `tiei_sample_5`  
+**Database schema:** `tiei_sample_4`  
 **Tables:** `pressure_monitoring_machine`, `pressure_sensor_data`
 
 ---
@@ -74,10 +74,10 @@ The new implementation:
 ### Tables
 
 ```sql
-tiei_sample_5.pressure_monitoring_machine
+tiei_sample_4.pressure_monitoring_machine
   id, machine_name, warning_limit, critical_limit
 
-tiei_sample_5.pressure_sensor_data
+tiei_sample_4.pressure_sensor_data
   machine_id, pressure_value, created_at, "timestamp"
 ```
 
@@ -121,7 +121,7 @@ flowchart TB
     H --> I[_fetch_pressure_timeline_points]
   end
 
-  subgraph DB["PostgreSQL tiei_sample_5"]
+  subgraph DB["PostgreSQL tiei_sample_4"]
     J[(pressure_sensor_data)]
     K[(pressure_monitoring_machine)]
   end

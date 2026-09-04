@@ -80,7 +80,7 @@ Data source: PostgreSQL tables `pressure_monitoring_machine` and `pressure_senso
 ```sql
 SELECT DISTINCT ON (machine_id)
     machine_id, pressure_value, created_at
-FROM tiei_sample_5.pressure_sensor_data
+FROM tiei_sample_4.pressure_sensor_data
 ORDER BY machine_id, created_at DESC NULLS LAST, "timestamp" DESC NULLS LAST;
 ```
 

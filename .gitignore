@@ -249,11 +249,17 @@ backend/output/
 frontend/node_modules
 frontend/dist
 frontend/build
+frontend_gd/node_modules
+frontend_gd/dist
+frontend_gd/build
 
 # Backend
 backend/venv
 backend/__pycache__
 backend/*.pyc
+backend_gd/venv
+backend_gd/__pycache__
+backend_gd/*.pyc
 
 # Env
 .env

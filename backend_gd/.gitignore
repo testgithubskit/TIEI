@@ -1,0 +1,9 @@
+# Tiei project files
+.idea
+*.iml
+out
+gen
+logs/
+configs/
+output/
+input/
