@@ -244,7 +244,11 @@ const handleQuerySubmit = async () => {
 };
 
 const handleQuerySubmitActivity = async () => {
-  await ActivityStore.fetchActivityDataParameter(machineSamplingWithLimitsStore.actualParameterName);
+  try {
+    await ActivityStore.fetchActivityDataParameter(machineSamplingWithLimitsStore.actualParameterName);
+  } catch (error) {
+    console.error('Failed to fetch activity data:', error);
+  }
   router.push("/corrective-activity");
 };
 
@@ -658,7 +662,7 @@ function OnHoverCallBack(hoverData){
           </div>
 
           <div v-if="!isCycleTimeSelected" class="flex flex-col items-center justify-end ml-8">
-            <BaseButton type="submit" color="info" label="View Activity" @click="handleQuerySubmitActivity()" />
+            <BaseButton type="button" color="info" label="View Activity" @click="handleQuerySubmitActivity()" />
           </div>
         </div>
 
