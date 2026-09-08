@@ -10,7 +10,7 @@ RUN npm ci --legacy-peer-deps
 COPY . .
 
 # Production API — direct to backend (browser shows :3003 in Network tab)
-ENV VITE_API_URL=http://10.82.126.25:3004/api/v1
+ENV VITE_API_URL=http://10.82.126.25:3003/api/v1
 # Must stay empty in production. If set, apiServices.js prefers it over VITE_API_URL
 # and a value without /api/v1 makes login hit :3003/auth (404) instead of :3003/api/v1/auth
 ENV VITE_DEV_API_URL=

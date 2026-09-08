@@ -1,6 +1,6 @@
 <script setup>
 import { mdiForwardburger, mdiBackburger, mdiMenu, mdiArrowLeft } from "@mdi/js";
-import { ref, onBeforeMount, computed } from "vue";
+import { ref, computed } from "vue";
 import { useRouter, useRoute } from "vue-router";
 import menuAside from "@/menuAside.js";
 import menuNavBar from "@/menuNavBar.js";
@@ -13,24 +13,9 @@ import NavBar from "@/components/NavBar.vue";
 import NavBarItemPlain from "@/components/NavBarItemPlain.vue";
 import AsideMenu from "@/components/AsideMenu.vue";
 import FooterBar from "@/components/FooterBar.vue";
-import Database from "@/components/Database.vue";
-import { useDatabaseName } from '@/stores/DatabaseName';
 import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore';
-import { buildPlantUrl, plantFromSchema } from '@/utils/plantUrls';
 
-const DatabaseName = useDatabaseName();
 const samplingStore = useMachineSamplingWithLimitsStore();
-
-onBeforeMount(async () => {
-  await DatabaseName.fetchSchemaName();
-});
-
-const currentPlant = computed(() => plantFromSchema(DatabaseName.schemaName));
-
-function switchPlant(target) {
-  if (!target || target === currentPlant.value) return;
-  window.location.assign(buildPlantUrl(target, '/factory-level-polling/parameter-overview/grid'));
-}
 
 useMainStore().setUser({
   name: "CMTI Admin",
@@ -54,7 +39,7 @@ const isMachineLevelSamplingPage = computed(() => (
   || String(route.name || '').toLowerCase().includes('air pressure sampling')
 ));
 
-/** Layout back + hide plant toggle only for air-pressure / honing sampling — not other machines */
+/** Layout back only for air-pressure / honing sampling — not other machines */
 const isPressureSamplingPage = computed(() => (
   isMachineLevelSamplingPage.value && (
     !!samplingStore.isPressureContext
@@ -62,8 +47,6 @@ const isPressureSamplingPage = computed(() => (
     || String(route.name || '').toLowerCase().includes('air pressure sampling')
   )
 ));
-
-const showPlantToggle = computed(() => !isPressureSamplingPage.value);
 
 const handleSamplingBack = () => {
   const previous = navigationHistoryStore.history.length
@@ -126,29 +109,6 @@ const menuClick = (event, item) => {
       'overflow-hidden lg:overflow-visible': isAsideMobileExpanded,
     }"
   >
-    <div v-if="showPlantToggle" class="plant-toggle-overlay" role="group" aria-label="Plant switch">
-      <button
-        type="button"
-        class="plant-toggle-btn"
-        :class="{ 'is-active': currentPlant === 'TNGA' }"
-        :disabled="currentPlant === 'TNGA'"
-        title="TNGA Plant"
-        @click="switchPlant('TNGA')"
-      >
-        TNGA Plant
-      </button>
-      <button
-        type="button"
-        class="plant-toggle-btn"
-        :class="{ 'is-active': currentPlant === 'GD' }"
-        :disabled="currentPlant === 'GD'"
-        title="GD Plant"
-        @click="switchPlant('GD')"
-      >
-        GD Plant
-      </button>
-    </div>
-
     <div
       :class="[layoutAsidePadding, { 'ml-60 lg:ml-0': isAsideMobileExpanded }]"
       class="min-h-screen w-screen transition-position lg:w-auto bg-gray-50 dark:bg-slate-800 dark:text-slate-100"
@@ -197,51 +157,3 @@ const menuClick = (event, item) => {
   </div>
 </template>
 
-<style scoped>
-.plant-toggle-overlay {
-  position: fixed;
-  top: 1.25rem;
-  left: 50%;
-  transform: translateX(-50%);
-  background-color: rgba(36, 133, 95, 0.95);
-  color: white;
-  padding: 3px;
-  border-radius: 9999px;
-  z-index: 50;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  display: inline-flex;
-  align-items: stretch;
-  gap: 2px;
-}
-
-.plant-toggle-btn {
-  border: none;
-  background: transparent;
-  color: rgba(255, 255, 255, 0.75);
-  padding: 0.35rem 0.9rem;
-  border-radius: 9999px;
-  font-weight: 800;
-  font-size: 0.8rem;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  cursor: pointer;
-  line-height: 1.1;
-  transition: background 0.15s ease, color 0.15s ease;
-  white-space: nowrap;
-}
-
-.plant-toggle-btn.is-active {
-  background: rgba(255, 255, 255, 0.95);
-  color: rgb(22, 101, 52);
-  cursor: default;
-}
-
-.plant-toggle-btn:not(.is-active):hover {
-  background: rgba(255, 255, 255, 0.18);
-  color: white;
-}
-
-.plant-toggle-btn:disabled {
-  cursor: default;
-}
-</style>

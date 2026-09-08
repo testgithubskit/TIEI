@@ -22,8 +22,11 @@ RUN npm run build
 # Stage 2: serve with nginx
 FROM nginx:alpine
 
-COPY --from=build /app/dist /usr/share/nginx/html/tiei_dynamic
+# Path must match vite `base` and nginx location /tiei_dynamic_gd/
+COPY --from=build /app/dist /usr/share/nginx/html/tiei_dynamic_gd
 COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY docker-entrypoint.d/40-ensure-gd-path.sh /docker-entrypoint.d/40-ensure-gd-path.sh
+RUN chmod +x /docker-entrypoint.d/40-ensure-gd-path.sh
 
 EXPOSE 80
 

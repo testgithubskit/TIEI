@@ -34,7 +34,6 @@ import { Tooltip } from 'ant-design-vue';
 import { RightCircleOutlined } from '@ant-design/icons-vue'; // Change this line
 import { useDatabaseName } from '@/stores/DatabaseName';
 import { combineAirHoningSignals, recountMachineStates } from '@/services/airHoningUtils';
-import { buildPlantUrl } from '@/utils/plantUrls';
 
 const router = useRouter();
 const route = useRoute();
@@ -475,20 +474,6 @@ watch(() => route.fullPath, (newPath) => {
       fetchCycleTimeData();
     }
   }
-});
-
-// Compute the button text and link based on the schema name
-const dashboardButton = computed(() => {
-  if (DatabaseName.schemaName === "tiei_gd_plant_1") {
-    return {
-      text: "Open TNGA Dashboard",
-      link: buildPlantUrl('TNGA', '/factory-level-polling/parameter-overview/grid'),
-    };
-  }
-  return {
-    text: "Open GD Dashboard",
-    link: buildPlantUrl('GD', '/factory-level-polling/parameter-overview/grid'),
-  };
 });
 
 </script>

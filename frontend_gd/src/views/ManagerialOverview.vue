@@ -162,46 +162,35 @@
             <div class="flex items-center gap-4">
               <!-- TIEI Logo -->
               <img :src="tieiLogo" alt="TIEI Logo" class="h-8 w-auto max-w-[150px] object-contain opacity-95 hover:scale-105 transition-transform duration-200" />
-              
-              <!-- Vertical Divider -->
-              <div class="h-6 w-px bg-slate-300 dark:bg-slate-700"></div>
-              
-              <!-- Title & Plant Name -->
-              <div class="flex items-center gap-4">
-                <span class="font-black tracking-widest text-[20px] uppercase leading-none noc-plant-name">
-                  Toyota Industries Engine India
-                </span>
-                <div
-                  class="noc-plant-toggle"
-                  :class="panelTheme === 'dark' ? 'noc-plant-toggle-dark' : 'noc-plant-toggle-light'"
-                  role="group"
-                  aria-label="Plant switch"
-                >
-                  <button
-                    type="button"
-                    class="noc-plant-toggle-btn"
-                    :class="{ 'is-active': currentPlant === 'TNGA' }"
-                    :disabled="currentPlant === 'TNGA'"
-                    title="Switch to TNGA Plant"
-                    @click="switchPlant('TNGA')"
-                  >
-                    TNGA Plant
-                  </button>
-                  <button
-                    type="button"
-                    class="noc-plant-toggle-btn"
-                    :class="{ 'is-active': currentPlant === 'GD' }"
-                    :disabled="currentPlant === 'GD'"
-                    title="Switch to GD Plant"
-                    @click="switchPlant('GD')"
-                  >
-                    GD Plant
-                  </button>
-                </div>
-              </div>
+
+              <div class="noc-header-sep"></div>
+
+              <span class="font-black tracking-widest text-[20px] uppercase leading-none noc-plant-name">
+                Toyota Industries Engine India
+              </span>
+
+              <div class="noc-header-sep"></div>
+
+              <span
+                class="noc-plant-badge"
+                :class="panelTheme === 'dark' ? 'noc-plant-badge-dark' : 'noc-plant-badge-light'"
+              >
+                {{ currentPlantLabel }}
+              </span>
             </div>
             
-            <div class="flex items-center gap-5">
+            <div class="flex items-center gap-3">
+              <button
+                type="button"
+                @click="openOtherPlant"
+                class="px-3 py-1.5 rounded-md text-[11px] font-extrabold tracking-wider uppercase transition-all hover:scale-105 active:scale-95 border"
+                :class="panelTheme === 'dark'
+                  ? 'bg-sky-500/20 text-sky-300 border-sky-500/40 hover:bg-sky-500/30'
+                  : 'bg-sky-50 text-sky-700 border-sky-200 hover:bg-sky-100'"
+                :title="otherPlantButtonLabel"
+              >
+                {{ otherPlantButtonLabel }}
+              </button>
               <button
                 type="button"
                 @click="goToFactoryPollingGrid"
@@ -1561,11 +1550,15 @@ const PLANT_URLS = computed(() => ({
 }));
 
 const currentPlant = computed(() => plantFromSchema(DatabaseName.schemaName));
+const currentPlantLabel = computed(() => `${currentPlant.value} Plant`);
+const otherPlant = computed(() => (currentPlant.value === 'GD' ? 'TNGA' : 'GD'));
+const otherPlantButtonLabel = computed(() =>
+  otherPlant.value === 'GD' ? 'Go to GD Plant' : 'Go to TNGA Plant'
+);
 
-function switchPlant(target) {
-  if (!target || target === currentPlant.value) return;
-  const url = PLANT_URLS.value[target];
-  if (url) window.location.assign(url);
+function openOtherPlant() {
+  const url = PLANT_URLS.value[otherPlant.value];
+  if (url) window.open(url, '_blank', 'noopener,noreferrer');
 }
 
 function logParameterDetails(param, machineName, parameterGroup, isPressureMachine = false) {
@@ -2871,73 +2864,30 @@ onBeforeUnmount(() => {
   text-shadow: 0 1px 1px rgba(0, 0, 0, 0.03);
 }
 
-/* Plant TNGA / GD toggle */
-.noc-plant-toggle {
-  display: inline-flex;
-  align-items: stretch;
-  border-radius: 999px;
-  overflow: hidden;
-  border: 1.5px solid transparent;
-  padding: 2px;
-  gap: 2px;
+.noc-header-sep {
+  width: 1px;
+  height: 1.5rem;
+  flex-shrink: 0;
 }
-.noc-plant-toggle-btn {
-  border: none;
-  background: transparent;
+.noc-dark-right-header .noc-header-sep {
+  background: rgba(148, 163, 184, 0.45);
+}
+.noc-light-right-header .noc-header-sep {
+  background: #cbd5e1;
+}
+
+.noc-plant-badge {
+  display: inline-flex;
+  align-items: center;
   padding: 7px 14px;
   font-size: 12px;
   font-weight: 900;
   letter-spacing: 0.06em;
   text-transform: uppercase;
-  cursor: pointer;
-  transition: background 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
   line-height: 1.1;
   border-radius: 999px;
   white-space: nowrap;
-}
-.noc-plant-toggle-btn:disabled {
-  cursor: default;
-}
-.noc-plant-toggle-btn + .noc-plant-toggle-btn {
-  border-left: none;
-}
-.noc-plant-toggle-dark {
-  border-color: rgba(5, 175, 241, 0.4);
-  background: rgba(15, 23, 42, 0.75);
-}
-.noc-plant-toggle-dark .noc-plant-toggle-btn {
-  color: #64748b;
-}
-.noc-plant-toggle-dark .noc-plant-toggle-btn + .noc-plant-toggle-btn {
-  border-left-color: transparent;
-}
-.noc-plant-toggle-dark .noc-plant-toggle-btn.is-active {
-  background: rgba(5, 175, 241, 0.22);
-  color: #05AFF1;
-  box-shadow: inset 0 0 0 1px rgba(5, 175, 241, 0.35);
-}
-.noc-plant-toggle-dark .noc-plant-toggle-btn:not(.is-active):hover {
-  color: #94a3b8;
-  background: rgba(51, 65, 85, 0.45);
-}
-.noc-plant-toggle-light {
-  border-color: rgba(0, 139, 197, 0.35);
-  background: rgba(248, 250, 252, 0.95);
-}
-.noc-plant-toggle-light .noc-plant-toggle-btn {
-  color: #94a3b8;
-}
-.noc-plant-toggle-light .noc-plant-toggle-btn + .noc-plant-toggle-btn {
-  border-left-color: transparent;
-}
-.noc-plant-toggle-light .noc-plant-toggle-btn.is-active {
-  background: rgba(0, 139, 197, 0.16);
-  color: #008bc5;
-  box-shadow: inset 0 0 0 1px rgba(0, 139, 197, 0.28);
-}
-.noc-plant-toggle-light .noc-plant-toggle-btn:not(.is-active):hover {
-  color: #475569;
-  background: rgba(226, 232, 240, 0.8);
+  border: 1.5px solid transparent;
 }
 
 /* Machine-state legend beside the zoom/Fit controls */
