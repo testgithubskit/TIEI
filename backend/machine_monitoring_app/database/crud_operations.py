@@ -7724,6 +7724,31 @@ def main():
     # print(get_maintenance_activities(start_time=1713418428772, end_time=1713422028772))
 
 
+def _list_cycle_time_machines():
+    rows = _execute_raw_sql(
+        f"""
+        SELECT id, name, location
+        FROM {schema_name}.cycle_time_machines
+        """
+    )
+    return [{"id": row[0], "name": (row[1] or "").strip(), "location": (row[2] or "").strip()} for row in rows]
+
+
+def _get_cycle_time_machine_by_name(machine_name: str):
+    rows = _execute_raw_sql(
+        f"""
+        SELECT id, name, location
+        FROM {schema_name}.cycle_time_machines
+        WHERE name = %s
+        LIMIT 1
+        """,
+        (machine_name,)
+    )
+    if not rows:
+        return None
+    return {"id": rows[0][0], "name": (rows[0][1] or "").strip(), "location": (rows[0][2] or "").strip()}
+
+
 @db_session(optimistic=False)
 def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime = None):
     """
@@ -7752,8 +7777,8 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
     query_from_time = (from_time - timedelta(hours=5, minutes=30)).replace(tzinfo=None)
     query_to_time = (to_time - timedelta(hours=5, minutes=30)).replace(tzinfo=None)
 
-    machines = list(select(m for m in Machine if m.enabled == True))
-    machines_by_id = {machine.id: machine for machine in machines}
+    machines = _list_cycle_time_machines()
+    machines_by_id = {machine["id"]: machine for machine in machines}
 
     # One query: latest cycle time per machine in the requested window
     range_rows = _execute_raw_sql(
@@ -7769,15 +7794,14 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
 
     machine_cycle_data = {}
     for machine_id, ct_time, cycle_time_value in range_rows:
-        machine = machines_by_id.get(machine_id)
-        if machine is not None:
-            machine_cycle_data[machine] = [(ct_time, cycle_time_value)]
+        if machine_id in machines_by_id:
+            machine_cycle_data[machine_id] = [(ct_time, cycle_time_value)]
 
-    machines_without_data = [machine for machine in machines if machine not in machine_cycle_data]
+    machines_without_data = [machine for machine in machines if machine["id"] not in machine_cycle_data]
 
     # Fallback: one query for latest row of machines missing from the window
     if machines_without_data:
-        missing_ids = [machine.id for machine in machines_without_data]
+        missing_ids = [machine["id"] for machine in machines_without_data]
         fallback_rows = _execute_raw_sql(
             f"""
             SELECT DISTINCT ON (ct.machine_id)
@@ -7789,9 +7813,8 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
             (missing_ids,)
         )
         for machine_id, ct_time, cycle_time_value in fallback_rows:
-            machine = machines_by_id.get(machine_id)
-            if machine is not None:
-                machine_cycle_data[machine] = [(ct_time, cycle_time_value)]
+            if machine_id in machines_by_id:
+                machine_cycle_data[machine_id] = [(ct_time, cycle_time_value)]
 
     # Initialize result structure
     result = {
@@ -7807,14 +7830,19 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
         result["message"] = "No cycle time data found in the selected time range. Showing latest available data instead."
 
     limits_by_machine_id = {
-        limits.machine.id: limits
-        for limits in CycleTimeLimits.select()
+        row[0]: {"warning_limit": row[1], "critical_limit": row[2]}
+        for row in _execute_raw_sql(
+            f"""
+            SELECT machine_id, warning_limit, critical_limit
+            FROM {schema_name}.cycle_time_limits
+            """
+        )
     }
 
     # Group machines by location
     for location, location_machines in groupby(
-        sorted(machines, key=lambda m: m.location),
-        key=lambda m: m.location
+        sorted(machines, key=lambda m: m["location"]),
+        key=lambda m: m["location"]
     ):
         line_data = {
             "line_name": location,
@@ -7824,23 +7852,16 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
         }
 
         for machine in location_machines:
-            # Check if this machine has cycle time data
-            if machine in machine_cycle_data:
-                # Get the latest cycle time for this machine (we only have one now)
-                latest_cycle_time = machine_cycle_data[machine][0]
-                ct_time, cycle_time_value = latest_cycle_time
+            cycle_time_limits = limits_by_machine_id.get(machine["id"])
+            if not cycle_time_limits:
+                continue
+
+            warning_limit = cycle_time_limits["warning_limit"]
+            critical_limit = cycle_time_limits["critical_limit"]
+
+            if machine["id"] in machine_cycle_data:
+                ct_time, cycle_time_value = machine_cycle_data[machine["id"]][0]
                 last_update = ct_time.timestamp() if hasattr(ct_time, "timestamp") else ct_time
-
-                # Get cycle time limits from database for this specific machine
-                cycle_time_limits = limits_by_machine_id.get(machine.id)
-                if cycle_time_limits:
-                    warning_limit = cycle_time_limits.warning_limit
-                    critical_limit = cycle_time_limits.critical_limit
-                else:
-                    # Skip this machine if no limits configured
-                    continue
-
-                # Determine state based on the latest value
                 if cycle_time_value >= critical_limit:
                     machine_state = "CRITICAL"
                     line_data["count"]["CRITICAL"] += 1
@@ -7850,18 +7871,21 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
                 else:
                     machine_state = "OK"
                     line_data["count"]["OK"] += 1
+            else:
+                cycle_time_value = None
+                last_update = None
+                machine_state = "OK"
+                line_data["count"]["OK"] += 1
 
-                machine_data = {
-                    "machine_name": machine.name,
-                    "machine_id": machine.id,
-                    "machine_state": machine_state,
-                    "parameter_value": cycle_time_value,
-                    "last_update_time": last_update,
-                    "warning_limit": warning_limit,
-                    "critical_limit": critical_limit
-                }
-
-                line_data["machines"].append(machine_data)
+            line_data["machines"].append({
+                "machine_name": machine["name"],
+                "machine_id": machine["id"],
+                "machine_state": machine_state,
+                "parameter_value": cycle_time_value,
+                "last_update_time": last_update,
+                "warning_limit": warning_limit,
+                "critical_limit": critical_limit
+            })
 
         # Determine line state based on machine states
         if line_data["count"]["CRITICAL"] > 0:
@@ -7905,8 +7929,8 @@ def get_cycle_time_machine_details(machine_name: str, from_time: datetime = None
     query_from_time = from_time - timedelta(hours=5, minutes=30)
     query_to_time = to_time - timedelta(hours=5, minutes=30)
 
-    # Get the machine
-    machine = Machine.get(name=machine_name)
+    # Get the machine from cycle_time_machines
+    machine = _get_cycle_time_machine_by_name(machine_name)
     if not machine:
         # Return empty data structure if machine doesn't exist
         return {
@@ -7925,12 +7949,20 @@ def get_cycle_time_machine_details(machine_name: str, from_time: datetime = None
         }
 
     # Get cycle time limits from database
-    cycle_time_limits = CycleTimeLimits.get(machine=machine)
-    if not cycle_time_limits:
+    limit_rows = _execute_raw_sql(
+        f"""
+        SELECT warning_limit, critical_limit
+        FROM {schema_name}.cycle_time_limits
+        WHERE machine_id = %s
+        LIMIT 1
+        """,
+        (machine["id"],)
+    )
+    if not limit_rows:
         # Return error if no limits configured for this machine
         return {
-            "machine_name": machine_name,
-            "machine_id": machine.id,
+            "machine_name": machine["name"],
+            "machine_id": machine["id"],
             "parameter_name": "CYCLE_TIME",
             "cycle_time_value": 0,
             "machine_state": "OK",
@@ -7943,12 +7975,12 @@ def get_cycle_time_machine_details(machine_name: str, from_time: datetime = None
             "message": f"No cycle time limits configured for machine '{machine_name}'. Please configure limits first."
         }
     
-    warning_limit = cycle_time_limits.warning_limit
-    critical_limit = cycle_time_limits.critical_limit
+    warning_limit = limit_rows[0][0]
+    critical_limit = limit_rows[0][1]
 
     # Get all cycle time data for this machine within the time range
     cycle_time_data = select(ct for ct in CycleTime
-                            if ct.machine == machine
+                            if ct.machine.id == machine["id"]
                             and ct.time >= query_from_time
                             and ct.time <= query_to_time) \
                       .order_by(CycleTime.time)
@@ -7984,8 +8016,8 @@ def get_cycle_time_machine_details(machine_name: str, from_time: datetime = None
         machine_state = "OK"
 
     result = {
-        "machine_name": machine.name,
-        "machine_id": machine.id,
+        "machine_name": machine["name"],
+        "machine_id": machine["id"],
         "parameter_name": "CYCLE_TIME",
         "cycle_time_value": cycle_time_value,
         "machine_state": machine_state,
@@ -8012,8 +8044,8 @@ def get_all_machines_for_cycle_time():
     Returns:
         list: List of machine names
     """
-    machines = select(m.name for m in Machine if m.enabled == True)
-    return list(machines)
+    machines = _list_cycle_time_machines()
+    return [machine["name"] for machine in machines]
 
 
 @db_session(optimistic=False)
@@ -8029,36 +8061,55 @@ def update_cycle_time_limits(machine_name: str, warning_limit: float, critical_l
     Returns:
         dict: Result message
     """
-    # Get the machine
-    machine = Machine.get(name=machine_name)
+    # Get the machine from cycle_time_machines
+    machine = _get_cycle_time_machine_by_name(machine_name)
     if not machine:
         raise HTTPException(status_code=404, detail=f"Machine '{machine_name}' not found")
-    
-    # Check if limits already exist for this machine
-    existing_limits = CycleTimeLimits.get(machine=machine)
-    if existing_limits:
-        # Update existing limits
-        existing_limits.warning_limit = warning_limit
-        existing_limits.critical_limit = critical_limit
-        return {
-            "message": f"Cycle time limits updated successfully for machine '{machine_name}'",
-            "machine_name": machine_name,
-            "warning_limit": warning_limit,
-            "critical_limit": critical_limit
-        }
-    else:
-        # Create new limits
-        CycleTimeLimits(
-            machine=machine,
-            warning_limit=warning_limit,
-            critical_limit=critical_limit
+
+    connection = PONY_DATABASE.get_connection()
+    cursor = connection.cursor()
+    try:
+        cursor.execute(
+            f"""
+            SELECT id
+            FROM {schema_name}.cycle_time_limits
+            WHERE machine_id = %s
+            LIMIT 1
+            """,
+            (machine["id"],)
         )
-        return {
-            "message": f"Cycle time limits created successfully for machine '{machine_name}'",
-            "machine_name": machine_name,
-            "warning_limit": warning_limit,
-            "critical_limit": critical_limit
-        }
+        existing_limits = cursor.fetchone()
+        if existing_limits:
+            cursor.execute(
+                f"""
+                UPDATE {schema_name}.cycle_time_limits
+                SET warning_limit = %s, critical_limit = %s
+                WHERE machine_id = %s
+                """,
+                (warning_limit, critical_limit, machine["id"])
+            )
+            message = f"Cycle time limits updated successfully for machine '{machine_name}'"
+        else:
+            cursor.execute(
+                f"""
+                INSERT INTO {schema_name}.cycle_time_limits
+                    (id, machine_id, warning_limit, critical_limit)
+                SELECT COALESCE(MAX(id), 0) + 1, %s, %s, %s
+                FROM {schema_name}.cycle_time_limits
+                """,
+                (machine["id"], warning_limit, critical_limit)
+            )
+            message = f"Cycle time limits created successfully for machine '{machine_name}'"
+        connection.commit()
+    finally:
+        cursor.close()
+
+    return {
+        "message": message,
+        "machine_name": machine_name,
+        "warning_limit": warning_limit,
+        "critical_limit": critical_limit
+    }
 
 
 if __name__ == '__main__':

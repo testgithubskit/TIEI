@@ -46,6 +46,16 @@ const cycleTimeError = ref(null);
 const cycleTimeWarningInput = ref(null);
 const cycleTimeCriticalInput = ref(null);
 
+const machineStateCardClass = computed(() => {
+  const state = cycleTimeData.value?.machine_state;
+  return {
+    OK: "bg-emerald-600 border-emerald-700 text-white",
+    WARNING: "bg-yellow-500 border-yellow-600 text-white",
+    CRITICAL: "bg-red-600 border-red-700 text-white",
+    DISCONNECTED: "bg-slate-500 border-slate-600 text-white",
+  }[state] || "bg-slate-100 border-slate-300 text-slate-700";
+});
+
 const warningInput = ref(machineSamplingWithLimitsStore.warningLimit);
 const criticalInput = ref(machineSamplingWithLimitsStore.criticalLimit);
 
@@ -562,7 +572,7 @@ function OnHoverCallBack(hoverData){
           <CardBoxWidgetPlainWrap 
             v-if="isCycleTimeSelected"
             label="Current Cycle Time"
-            :parameter-value="isCycleTimeLoading ? 'Loading...' : (cycleTimeData ? cycleTimeData.cycle_time_value + 's' : 'N/A')">
+            :parameter-value="isCycleTimeLoading ? 'Loading...' : (cycleTimeData && cycleTimeData.cycle_time_value != null ? cycleTimeData.cycle_time_value + 's' : '-')">
           </CardBoxWidgetPlainWrap>
           <CardBoxWidgetPlainWrap 
             v-if="isCycleTimeSelected"
@@ -629,7 +639,10 @@ function OnHoverCallBack(hoverData){
           </div>
 
           <div class="ml-8">
-            <label class="block mb-2 text-gray-700">To</label>
+            <label class="block mb-2 text-gray-700">
+              To
+              <span v-if="isCycleTimeSelected" class="ml-1 text-xs font-normal text-slate-500">(max 1 week)</span>
+            </label>
             <TimePickerFlatEmitter
               ref="toPickerRef"
               :defaultDatetime="toPickerDatetime"
@@ -638,27 +651,21 @@ function OnHoverCallBack(hoverData){
             />
           </div>
 
-          <div class="flex flex-col items-center justify-end ml-8">
+          <div class="flex items-end ml-8">
             <BaseButton type="submit" color="info" label="Submit" @click="handleQuerySubmit" />
-            <span
-              v-if="isCycleTimeSelected"
-              class="mt-1 text-[11px] font-semibold text-slate-500"
-            >
-              Max range: 1 week
-            </span>
           </div>
 
-          <div v-if="isCycleTimeSelected && cycleTimeData" class="ml-8 flex flex-col justify-center">
-            <label class="block mb-2 text-gray-700">Machine State</label>
-            <span
-              :class="{
-                'text-red-600 font-semibold': cycleTimeData.machine_state === 'CRITICAL',
-                'text-yellow-600 font-semibold': cycleTimeData.machine_state === 'WARNING',
-                'text-green-600 font-semibold': cycleTimeData.machine_state === 'OK'
-              }"
+          <div
+            v-if="isCycleTimeSelected && cycleTimeData"
+            class="ml-8 inline-flex items-end"
+          >
+            <div
+              class="inline-flex items-center py-2 px-4 rounded border shadow-sm whitespace-nowrap"
+              :class="machineStateCardClass"
             >
-              {{ cycleTimeData.machine_state }}
-            </span>
+              <span class="text-sm font-medium mr-2">Machine State</span>
+              <span class="font-semibold">{{ cycleTimeData.machine_state }}</span>
+            </div>
           </div>
 
           <div v-if="!isCycleTimeSelected" class="flex flex-col items-center justify-end ml-8">

@@ -51,9 +51,15 @@ const borderColor = computed(() => {
 
 const cycleTimeDisplay = computed(() => {
   if (props.cycleTime === null || props.cycleTime === undefined) {
-    return "N/A";
+    return "-";
   }
   return `${props.cycleTime.toFixed(2)}s`;
+});
+
+const cardMinWidth = computed(() => {
+  const nameLength = (props.machineName || "").length;
+  const widthPx = Math.max(112, Math.min(nameLength * 9 + 40, 320));
+  return `${widthPx}px`;
 });
 
 const handleMachineClick = () => {
@@ -66,9 +72,9 @@ const handleMachineClick = () => {
 </script>
 
 <template>
-  <div :class="['w-24', borderClass]" class="flex flex-col mx-0" @click="handleMachineClick">
-    <div class="p-4 rounded-t-lg text-white text-center h-5 flex items-center justify-center" :class="machineBgColor">{{ props.machineName }}</div>
-    <div class="p-4 text-center font-medium font-sans flex-grow flex items-center justify-center">
+  <div :class="borderClass" class="flex flex-col mx-0" :style="{ minWidth: cardMinWidth, width: cardMinWidth }" @click="handleMachineClick">
+    <div class="px-3 py-2 rounded-t-lg text-white text-center flex items-center justify-center font-semibold text-sm whitespace-nowrap" :class="machineBgColor">{{ props.machineName }}</div>
+    <div class="p-3 text-center font-medium font-sans flex-grow flex items-center justify-center">
       <div>
         <div class="text-xs text-gray-500 mb-1">Cycle Time</div>
         <div class="text-lg font-bold">{{ cycleTimeDisplay }}</div>

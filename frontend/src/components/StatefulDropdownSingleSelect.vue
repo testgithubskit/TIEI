@@ -23,7 +23,9 @@ const props = defineProps({
 
 
 let itemsMapped = computed(() => {return props.items.map(item => ({
-    label: item.item_name.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' '),
+    label: item.item_name === 'CYCLE_TIME'
+      ? 'Cycle Time'
+      : item.item_name.split('_').map(part => part.charAt(0).toUpperCase() + part.slice(1)).join(' '),
     value: item.item_name,
     state: item.item_state,
   }))});
@@ -77,8 +79,8 @@ watch(props, (newProps) => {
   selectedItem.value = newProps.defaultSelectedItem;
 });
 
-watch(() => props.defaultSelectedItem, (newProps) => {
-  selectedItem.value = newProps.defaultSelectedItem;
+watch(() => props.defaultSelectedItem, (newSelectedItem) => {
+  selectedItem.value = newSelectedItem;
 });
 
 </script>

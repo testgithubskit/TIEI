@@ -120,7 +120,10 @@ const groupCount = computed(() => {
   };
 });
 
-const totalMachines = computed(() => { 
+const totalMachines = computed(() => {
+  if (factoryPollOverviewGridStore.SelectedParmeter.item_name === 'CYCLE_TIME' && cycleTimeData.value?.lines) {
+    return cycleTimeData.value.lines.reduce((sum, line) => sum + (line.machines?.length || 0), 0);
+  }
   return groupCount.value.OK + groupCount.value.WARNING + groupCount.value.CRITICAL + groupCount.value.DISCONNECTED;
 });
 
@@ -323,14 +326,7 @@ const handleSelectedParameterUpdate = async (selectedItem) => {
 };
 
 const handleParameterClick = async (selectedItem) => {
-
-if (selectedItem !== null){
-
-  let newSelectedParameter = { item_name: selectedItem.value, item_state: selectedItem.state };
-
-  factoryPollOverviewGridStore.SelectedParmeter = newSelectedParameter;
-  initialSelectedParameter.value = selectedItem;
-}
+  await handleSelectedParameterUpdate(selectedItem);
 };
 const handleSelectedParameterUpdate2 = async (selectedItem) => {
 

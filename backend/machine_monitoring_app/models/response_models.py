@@ -819,8 +819,8 @@ class CycleTimeMachine(BaseModel):
     machine_name: str
     machine_id: Optional[int]
     machine_state: str
-    parameter_value: float
-    last_update_time: float
+    parameter_value: Optional[float] = None
+    last_update_time: Optional[float] = None
     warning_limit: float
     critical_limit: float
 
