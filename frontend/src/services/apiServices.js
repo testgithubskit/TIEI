@@ -22,6 +22,9 @@ export const backendApi = axios.create({
 // Request interceptor
 backendApi.interceptors.request.use(
   (config) => {
+    if (config.url && config.url.includes('/cycle-time/factory-layout')) {
+      config.timeout = 60000;
+    }
     console.log('Making request to:', config.url);
     return config;
   },

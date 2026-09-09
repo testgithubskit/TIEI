@@ -31,4 +31,4 @@ ENV MONGODB_PASSWORD="12345"
 ENV MONGODB_HOST="10.82.126.46"
 
 # start the server
-CMD ["uvicorn", "main:APP", "--host", "0.0.0.0", "--port", "3004"]
+CMD ["uvicorn", "main:APP", "--host", "0.0.0.0", "--port", "3004", "--workers", "4"]

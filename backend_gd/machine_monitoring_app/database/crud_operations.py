@@ -7391,53 +7391,10 @@ def get_pending_alerts_overview():
 
 @db_session(optimistic=False)
 def get_real_time_parameters_data_mtlinki_new_layout():
-    # Get the PostgreSQL data
-    machines = select(m.name for m in Machine)
-    parameters = select(mp.name for mp in MachineParameter)
-    mongodb_q = select(mpg.mongodb_query for mpg in ParameterGroup)
-
-    # Get the MongoDB collection
-    collection = get_mongo_collection("L1Signal_Pool_Active")
-
-    # Initialize an empty list to store processed data
-    processed_data = []
-
-    # Loop through each machine name from PostgreSQL
-    for machine_name in machines:
-        # Loop through each parameter using regex pattern from PostgreSQL
-        for mongodb_query in mongodb_q:
-            # Define the MongoDB query regex pattern
-            regex_pattern = re.compile(f".*{mongodb_query}.*")
-
-            # MongoDB aggregation pipeline
-            pipeline = [
-                {
-                    '$match': {
-                        'L1Name': machine_name,
-                        'signalname': {'$regex': regex_pattern}
-                    }
-                },
-                {
-                    '$project': {
-                        'L1Name': 1,
-                        'signalname': 1,
-                        'value': 1
-                    }
-                }
-            ]
-
-            # Execute the aggregation pipeline
-            result = collection.aggregate(pipeline)
-
-            # Convert the cursor to a list of dictionaries
-            result_list = list(result)
-
-            # Append the processed data to the list
-            processed_data.extend(result_list)
-
-    # Convert the processed data to a Pandas DataFrame
-    df = pd.DataFrame(processed_data)
-    LOGGER.info(df)
+    # Live machine/parameter state comes from Postgres (real_time_machine_parameters_active).
+    # A previous nested Mongo aggregate (every machine × every parameter-group regex) was unused
+    # in the response and blocked the single uvicorn worker for tens of seconds, which made
+    # login time out ("Not authenticated") and the whole UI feel stuck after the dashboard ran.
 
     # Query the database for relevant data
     result = select(

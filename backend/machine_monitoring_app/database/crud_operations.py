@@ -7391,53 +7391,10 @@ def get_pending_alerts_overview():
 
 @db_session(optimistic=False)
 def get_real_time_parameters_data_mtlinki_new_layout():
-    # Get the PostgreSQL data
-    machines = select(m.name for m in Machine)
-    parameters = select(mp.name for mp in MachineParameter)
-    mongodb_q = select(mpg.mongodb_query for mpg in ParameterGroup)
-
-    # Get the MongoDB collection
-    collection = get_mongo_collection("L1Signal_Pool_Active")
-
-    # Initialize an empty list to store processed data
-    processed_data = []
-
-    # Loop through each machine name from PostgreSQL
-    for machine_name in machines:
-        # Loop through each parameter using regex pattern from PostgreSQL
-        for mongodb_query in mongodb_q:
-            # Define the MongoDB query regex pattern
-            regex_pattern = re.compile(f".*{mongodb_query}.*")
-
-            # MongoDB aggregation pipeline
-            pipeline = [
-                {
-                    '$match': {
-                        'L1Name': machine_name,
-                        'signalname': {'$regex': regex_pattern}
-                    }
-                },
-                {
-                    '$project': {
-                        'L1Name': 1,
-                        'signalname': 1,
-                        'value': 1
-                    }
-                }
-            ]
-
-            # Execute the aggregation pipeline
-            result = collection.aggregate(pipeline)
-
-            # Convert the cursor to a list of dictionaries
-            result_list = list(result)
-
-            # Append the processed data to the list
-            processed_data.extend(result_list)
-
-    # Convert the processed data to a Pandas DataFrame
-    df = pd.DataFrame(processed_data)
-    LOGGER.info(df)
+    # Live machine/parameter state comes from Postgres (real_time_machine_parameters_active).
+    # A previous nested Mongo aggregate (every machine × every parameter-group regex) was unused
+    # in the response and blocked the single uvicorn worker for tens of seconds, which made
+    # login time out ("Not authenticated") and the whole UI feel stuck after the dashboard ran.
 
     # Query the database for relevant data
     result = select(
@@ -7791,41 +7748,50 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
     if from_time is None:
         from_time = to_time - timedelta(hours=1)
 
-    # Get only the latest cycle time per machine within the time range
-    # This is much more efficient than fetching all data
-    from pony.orm import max
-    
-    # Get all enabled machines first
-    machines = select(m for m in Machine if m.enabled == True)
-    
-    # For each machine, get only the latest cycle time in the time range
+    # Compare against stored time after subtracting IST offset (5h 30m)
+    query_from_time = (from_time - timedelta(hours=5, minutes=30)).replace(tzinfo=None)
+    query_to_time = (to_time - timedelta(hours=5, minutes=30)).replace(tzinfo=None)
+
+    machines = list(select(m for m in Machine if m.enabled == True))
+    machines_by_id = {machine.id: machine for machine in machines}
+
+    # One query: latest cycle time per machine in the requested window
+    range_rows = _execute_raw_sql(
+        f"""
+        SELECT DISTINCT ON (ct.machine_id)
+            ct.machine_id, ct.time, ct.cycle_time
+        FROM {schema_name}.sql_server_mct_data ct
+        WHERE ct.time >= %s AND ct.time <= %s
+        ORDER BY ct.machine_id, ct.time DESC
+        """,
+        (query_from_time, query_to_time)
+    )
+
     machine_cycle_data = {}
-    machines_without_data = []
-    
-    for machine in machines:
-        latest_ct = select(ct for ct in CycleTime
-                         if ct.machine == machine
-                         and ct.time >= from_time 
-                         and ct.time <= to_time) \
-                  .order_by(CycleTime.time.desc()) \
-                  .first()
-        
-        if latest_ct:
-            machine_cycle_data[machine] = [latest_ct]
-        else:
-            machines_without_data.append(machine)
-    
-    # Fallback: Get latest cycle time for machines that had no data in time range
-    # This ensures we show latest available data instead of empty results
+    for machine_id, ct_time, cycle_time_value in range_rows:
+        machine = machines_by_id.get(machine_id)
+        if machine is not None:
+            machine_cycle_data[machine] = [(ct_time, cycle_time_value)]
+
+    machines_without_data = [machine for machine in machines if machine not in machine_cycle_data]
+
+    # Fallback: one query for latest row of machines missing from the window
     if machines_without_data:
-        for machine in machines_without_data:
-            latest_ct = select(ct for ct in CycleTime
-                             if ct.machine == machine) \
-                      .order_by(CycleTime.time.desc()) \
-                      .first()
-            
-            if latest_ct:
-                machine_cycle_data[machine] = [latest_ct]
+        missing_ids = [machine.id for machine in machines_without_data]
+        fallback_rows = _execute_raw_sql(
+            f"""
+            SELECT DISTINCT ON (ct.machine_id)
+                ct.machine_id, ct.time, ct.cycle_time
+            FROM {schema_name}.sql_server_mct_data ct
+            WHERE ct.machine_id = ANY(%s)
+            ORDER BY ct.machine_id, ct.time DESC
+            """,
+            (missing_ids,)
+        )
+        for machine_id, ct_time, cycle_time_value in fallback_rows:
+            machine = machines_by_id.get(machine_id)
+            if machine is not None:
+                machine_cycle_data[machine] = [(ct_time, cycle_time_value)]
 
     # Initialize result structure
     result = {
@@ -7840,8 +7806,16 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
     if machines_without_data:
         result["message"] = "No cycle time data found in the selected time range. Showing latest available data instead."
 
+    limits_by_machine_id = {
+        limits.machine.id: limits
+        for limits in CycleTimeLimits.select()
+    }
+
     # Group machines by location
-    for location, location_machines in groupby(machines, key=lambda m: m.location):
+    for location, location_machines in groupby(
+        sorted(machines, key=lambda m: m.location),
+        key=lambda m: m.location
+    ):
         line_data = {
             "line_name": location,
             "line_state": "OK",
@@ -7854,12 +7828,11 @@ def get_cycle_time_factory_layout(from_time: datetime = None, to_time: datetime 
             if machine in machine_cycle_data:
                 # Get the latest cycle time for this machine (we only have one now)
                 latest_cycle_time = machine_cycle_data[machine][0]
-
-                cycle_time_value = latest_cycle_time.cycle_time
-                last_update = latest_cycle_time.time.timestamp()
+                ct_time, cycle_time_value = latest_cycle_time
+                last_update = ct_time.timestamp() if hasattr(ct_time, "timestamp") else ct_time
 
                 # Get cycle time limits from database for this specific machine
-                cycle_time_limits = CycleTimeLimits.get(machine=machine)
+                cycle_time_limits = limits_by_machine_id.get(machine.id)
                 if cycle_time_limits:
                     warning_limit = cycle_time_limits.warning_limit
                     critical_limit = cycle_time_limits.critical_limit
@@ -7928,6 +7901,10 @@ def get_cycle_time_machine_details(machine_name: str, from_time: datetime = None
     if from_time is None:
         from_time = to_time - timedelta(hours=1)
 
+    # Compare against stored time after subtracting IST offset (5h 30m)
+    query_from_time = from_time - timedelta(hours=5, minutes=30)
+    query_to_time = to_time - timedelta(hours=5, minutes=30)
+
     # Get the machine
     machine = Machine.get(name=machine_name)
     if not machine:
@@ -7972,8 +7949,8 @@ def get_cycle_time_machine_details(machine_name: str, from_time: datetime = None
     # Get all cycle time data for this machine within the time range
     cycle_time_data = select(ct for ct in CycleTime
                             if ct.machine == machine
-                            and ct.time >= from_time
-                            and ct.time <= to_time) \
+                            and ct.time >= query_from_time
+                            and ct.time <= query_to_time) \
                       .order_by(CycleTime.time)
 
     # Convert to list for iteration
