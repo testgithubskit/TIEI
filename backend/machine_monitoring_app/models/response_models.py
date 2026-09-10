@@ -539,6 +539,8 @@ class ParameterStateData(BaseModel):
     """
     name: str
     item_state: str
+    warning_limit: Optional[float] = None
+    critical_limit: Optional[float] = None
 
 
 class MachineParameterResponseModelState(BaseModel):

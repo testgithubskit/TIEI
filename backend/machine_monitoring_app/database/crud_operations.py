@@ -7154,8 +7154,21 @@ def get_machine_parameters_state(machine_name="Laser Cladding"):
             #     parameters, parameter_states)]
 
             # Getting all the parameters of the machine
-            parameters = [{"name": state.machine_parameter.name, "item_state": state.parameter_condition.name}
-                          for state in parameter_states]
+            parameters = []
+            for state in parameter_states:
+                mp = state.machine_parameter
+                warning_limit = mp.warning_limit
+                critical_limit = mp.critical_limit
+                if warning_limit is not None and isinstance(warning_limit, float) and math.isnan(warning_limit):
+                    warning_limit = None
+                if critical_limit is not None and isinstance(critical_limit, float) and math.isnan(critical_limit):
+                    critical_limit = None
+                parameters.append({
+                    "name": mp.name,
+                    "item_state": state.parameter_condition.name,
+                    "warning_limit": warning_limit,
+                    "critical_limit": critical_limit,
+                })
 
             response = {"data": parameters}
             LOGGER.info(response)

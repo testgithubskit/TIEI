@@ -240,7 +240,11 @@ document.addEventListener('click', (event) => {
 
 // Define redirectToPosition method to handle the "Position" button click
 const redirectToDetails = () => {
-  router.push('/spm-detail');
+  const machine = specialPurposeMachinePositionStore.machine;
+  router.push({
+    path: '/spm-detail',
+    query: machine ? { machine } : {},
+  });
 };
 
 

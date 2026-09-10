@@ -8,14 +8,15 @@ import { useMainStore } from "@/stores/main.js";
 import { useStyleStore } from "@/stores/style.js";
 import { useNavigationHistoryStore } from "@/stores/navigationHistoryStore";
 import BaseIcon from "@/components/BaseIcon.vue";
-import FormControl from "@/components/FormControl.vue";
 import NavBar from "@/components/NavBar.vue";
 import NavBarItemPlain from "@/components/NavBarItemPlain.vue";
 import AsideMenu from "@/components/AsideMenu.vue";
 import FooterBar from "@/components/FooterBar.vue";
 import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore';
+import { useSpecialPurposeMachineDetailStore } from '@/stores/SpecialPurposeMachineDetailStore';
 
 const samplingStore = useMachineSamplingWithLimitsStore();
+const specialPurposeMachineDetailStore = useSpecialPurposeMachineDetailStore();
 
 useMainStore().setUser({
   name: "CMTI Admin",
@@ -47,6 +48,26 @@ const isPressureSamplingPage = computed(() => (
     || String(route.name || '').toLowerCase().includes('air pressure sampling')
   )
 ));
+
+const isSpmDetailPage = computed(() => String(route.path || '').includes('spm-detail'));
+const isSpmPage = computed(() => (
+  isSpmDetailPage.value
+  || String(route.path || '').includes('spm-overview')
+));
+
+const handleSpmBack = () => {
+  const historyEntry = navigationHistoryStore.history.length
+    ? navigationHistoryStore.history[navigationHistoryStore.history.length - 1]
+    : null;
+  const fromHistory = historyEntry?.fullPath || historyEntry?.path || '';
+  const candidate = fromHistory && !String(fromHistory).includes('spm-detail')
+    ? fromHistory
+    : specialPurposeMachineDetailStore.resolveBackPath();
+  if (fromHistory && !String(fromHistory).includes('spm-detail')) {
+    navigationHistoryStore.removeLastRoute();
+  }
+  router.push(candidate || '/spm-overview');
+};
 
 const handleSamplingBack = () => {
   const previous = navigationHistoryStore.history.length
@@ -94,8 +115,6 @@ const menuClick = (event, item) => {
     styleStore.setDarkMode();
   }
   if (item.label == "Logout"){
-    console.log("yesssssssssssssssss")
-    console.log("Logged out")
     localStorage.removeItem("token");
      router.push("/");
   }
@@ -110,7 +129,11 @@ const menuClick = (event, item) => {
     }"
   >
     <div
-      :class="[layoutAsidePadding, { 'ml-60 lg:ml-0': isAsideMobileExpanded }]"
+      :class="[
+        layoutAsidePadding,
+        { 'ml-60 lg:ml-0': isAsideMobileExpanded },
+        isSpmPage ? 'pt-14 h-screen overflow-hidden flex flex-col box-border' : '',
+      ]"
       class="min-h-screen w-screen transition-position lg:w-auto bg-gray-50 dark:bg-slate-800 dark:text-slate-100"
     >
       <NavBar
@@ -143,6 +166,13 @@ const menuClick = (event, item) => {
         >
           <BaseIcon :path="mdiArrowLeft" size="24" class="text-green-600" />
         </NavBarItemPlain>
+        <NavBarItemPlain
+          v-if="isSpmDetailPage"
+          display="flex"
+          @click.prevent="handleSpmBack"
+        >
+          <BaseIcon :path="mdiArrowLeft" size="24" class="text-green-600" />
+        </NavBarItemPlain>
       </NavBar>
       <AsideMenu
         :is-aside-mobile-expanded="isAsideMobileExpanded"
@@ -152,11 +182,10 @@ const menuClick = (event, item) => {
         @aside-lg-close-click="isAsideLgActive = false"
       />
       <slot />
-      <FooterBar v-if="!isPressureSamplingPage" />
+      <FooterBar v-if="!isPressureSamplingPage && !isSpmPage" />
     </div>
   </div>
 </template>
 
 <style scoped>
 </style>
-

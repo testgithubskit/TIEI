@@ -1,26 +1,21 @@
 <script setup>
-import { computed, ref, onBeforeMount } from "vue";
+import { computed, ref, onBeforeMount, onBeforeUnmount, watch } from "vue";
 
-import DyLineChartMultiple from "@/components/Charts/DyLineChartMultiple.vue";
 import SteplineChart from "@/components/Charts/SteplineChart.vue";
 import TimePickerFlatEmitter from "@/components/TimePickerFlatEmitter.vue";
-import SectionMain from "@/components/SectionMain.vue";
-import CardBox from "@/components/CardBox.vue";
 import BaseButton from "@/components/BaseButton.vue";
-import GraphLegend from "@/components/GraphLegend.vue";
 import LayoutAuthenticatedSimple from "@/layouts/LayoutAuthenticatedSimple.vue";
-import BlurryHorizontalDivider from "@/components/BlurryHorizontalDivider.vue";
-import DropDownMultiSelectPrimeVue from "@/components/DropDownMultiSelectPrimeVue.vue";
-
-
 import CardBoxWidgetPlainWrap from "@/components/CardBoxWidgetPlainWrap.vue";
 
 //Importing Store Statements
 
 import { useSpecialPurposeMachineDetailStore } from '@/stores/SpecialPurposeMachineDetailStore'; 
-import { useRouter } from 'vue-router';
+import { useRouter, useRoute } from 'vue-router';
+import { useNavigationHistoryStore } from '@/stores/navigationHistoryStore';
 
 const router = useRouter();
+const route = useRoute();
+const navigationHistoryStore = useNavigationHistoryStore();
 
 const selectedParameters = ref([]);
 
@@ -90,7 +85,7 @@ const handleQuerySubmit = async () => {
   specialPurposeMachineDetailStore.setSelectedParameters(selectedParameters.value);
   console.log("Selected Parameters:", specialPurposeMachineDetailStore.selectedParameters);
  
-  await specialPurposeMachineDetailStore.fetchMachineParameterData();
+  await specialPurposeMachineDetailStore.fetchMachineParameterData(true);
   console.log("updateedddddddddd")
   console.log(specialPurposeMachineDetailStore.chartData)
    
@@ -102,9 +97,30 @@ const handleQuerySubmit = async () => {
 //   router.push(routeObject);
 // };
 
+function applyRouteMachine() {
+  const queryMachine = route.query.machine;
+  if (queryMachine) {
+    specialPurposeMachineDetailStore.setSelectedMachine(String(queryMachine));
+  }
+  const queryParam = route.query.param;
+  if (queryParam) {
+    specialPurposeMachineDetailStore.setPendingParameter(String(queryParam));
+  }
+}
+
 const handleBack = async () => {
-  
-  router.push('/spm-overview')
+  const historyEntry = navigationHistoryStore.history.length
+    ? navigationHistoryStore.history[navigationHistoryStore.history.length - 1]
+    : null;
+  const fromHistory = historyEntry?.fullPath || historyEntry?.path || '';
+  const candidate = fromHistory && !String(fromHistory).includes('spm-detail')
+    ? fromHistory
+    : specialPurposeMachineDetailStore.resolveBackPath();
+
+  if (fromHistory && !String(fromHistory).includes('spm-detail')) {
+    navigationHistoryStore.removeLastRoute();
+  }
+  router.push(candidate || '/spm-overview');
 };
 
 
@@ -120,10 +136,64 @@ const handleToDateChange = (dateValue) => {
   specialPurposeMachineDetailStore.selectedDates.to = dateValue.value;
 };
 
-onBeforeMount(async () => {
-  console.log("sampling on mount");
-  specialPurposeMachineDetailStore.fetchMachineParameterList();
+const isParamDropdownOpen = ref(false);
+const paramSearch = ref('');
+
+const filteredParameters = computed(() => {
+  const list = availableParameters.value || [];
+  const query = paramSearch.value.trim().toLowerCase();
+  if (!query) return list;
+  return list.filter((parameter) => {
+    const label = formatGrindingParamLabel(parameter.name).toLowerCase();
+    return label.includes(query) || String(parameter.name || '').toLowerCase().includes(query);
+  });
 });
+
+function paramStateDot(state) {
+  return {
+    OK: 'bg-emerald-600',
+    WARNING: 'bg-yellow-600',
+    CRITICAL: 'bg-red-600',
+  }[state] || 'bg-slate-400';
+}
+
+function toggleParamDropdown() {
+  isParamDropdownOpen.value = !isParamDropdownOpen.value;
+  if (!isParamDropdownOpen.value) paramSearch.value = '';
+}
+
+function closeParamDropdown(event) {
+  const root = event.target.closest?.('.spm-param-dropdown');
+  if (!root) isParamDropdownOpen.value = false;
+}
+
+onBeforeMount(async () => {
+  applyRouteMachine();
+  await specialPurposeMachineDetailStore.fetchMachineParameterList();
+  await initializeParameterSelection();
+});
+
+onBeforeUnmount(() => {
+  document.removeEventListener('click', closeParamDropdown);
+});
+
+watch(isParamDropdownOpen, (open) => {
+  if (open) {
+    setTimeout(() => document.addEventListener('click', closeParamDropdown), 0);
+  } else {
+    document.removeEventListener('click', closeParamDropdown);
+  }
+});
+
+watch(
+  () => route.query.machine,
+  async (queryMachine, prevQuery) => {
+    if (!queryMachine || String(queryMachine) === String(prevQuery || '')) return;
+    applyRouteMachine();
+    await specialPurposeMachineDetailStore.fetchMachineParameterList();
+    await initializeParameterSelection();
+  }
+);
 
 function convertEpochToLocal(epochTimestamp) {
   // Create a Date object from the epoch timestamp
@@ -164,160 +234,271 @@ function OnHoverCallBack(hoverData){
 
 // Define redirectToPosition method to handle the "Position" button click
 const redirectToPosition = () => {
-  router.push('/spm-detail-position');
+  router.push({
+    path: '/spm-detail-position',
+    query: specialPurposeMachineDetailStore.machine
+      ? { machine: specialPurposeMachineDetailStore.machine }
+      : {},
+  });
 };
 
+
+const isGrindingMachine = computed(() => {
+  const name = String(specialPurposeMachineDetailStore.machine || '').toUpperCase();
+  return (name.includes('JOURNAL') && name.includes('GRINDING'))
+    || /JOP[_\s-]*(105|130|140)/.test(name);
+});
+
+const activeGrindingParameter = computed(() => {
+  if (!isGrindingMachine.value) return '';
+  const values = selectedParameters.value || [];
+  return values[values.length - 1] || '';
+});
+
+function formatGrindingParamLabel(name) {
+  const match = String(name || '').match(/^(MeasurementData\([^)]+\))/i);
+  return match ? match[1] : (name || '');
+}
+
+function findDefaultAeParameter(params, machineName) {
+  const names = (params || []).map((p) => p.name).filter(Boolean);
+  const aeMatch = names.find((name) => /AE_GRAPH_SCAL_DP/i.test(name));
+  if (aeMatch) return aeMatch;
+  const jop = String(machineName || '').match(/JOP[_\s-]*(\d+)/i);
+  if (jop) {
+    const suffix = names.find((name) => name.includes(jop[1]) && /AE_GRAPH/i.test(name));
+    if (suffix) return suffix;
+  }
+  return names[0] || '';
+}
+
+function applyLimitsForParameter(parameterName) {
+  const param = (specialPurposeMachineDetailStore.availableParameters || [])
+    .find((item) => item.name === parameterName);
+  const warning = param?.warning_limit;
+  const critical = param?.critical_limit;
+  warningInput.value = warning ?? '';
+  criticalInput.value = critical ?? '';
+  specialPurposeMachineDetailStore.warningLimit = warning ?? 0;
+  specialPurposeMachineDetailStore.criticalLimit = critical ?? 0;
+  specialPurposeMachineDetailStore.actualParameterName = parameterName;
+}
+
+function matchPendingParameter(pending, names) {
+  if (!pending) return '';
+  if (names.includes(pending)) return pending;
+  const pendingUpper = String(pending).toUpperCase();
+  return names.find((name) => {
+    const upper = String(name).toUpperCase();
+    return upper.includes(pendingUpper) || pendingUpper.includes(upper);
+  }) || '';
+}
+
+function initializeGrindingSelection() {
+  return initializeParameterSelection();
+}
+
+async function initializeParameterSelection() {
+  const params = specialPurposeMachineDetailStore.availableParameters || [];
+  const names = params.map((p) => p.name).filter(Boolean);
+  const pendingMatch = matchPendingParameter(
+    specialPurposeMachineDetailStore.pendingParameter || route.query.param,
+    names
+  );
+  const initial = pendingMatch
+    || (isGrindingMachine.value
+      ? findDefaultAeParameter(params, specialPurposeMachineDetailStore.machine)
+      : (names[0] || ''));
+
+  selectedParameters.value = initial ? [initial] : [];
+  specialPurposeMachineDetailStore.setSelectedParameters(selectedParameters.value);
+  if (initial) applyLimitsForParameter(initial);
+  specialPurposeMachineDetailStore.setPendingParameter('');
+
+  if (initial) {
+    await specialPurposeMachineDetailStore.fetchMachineParameterData(false);
+  }
+}
+
+watch(selectedParameters, (values) => {
+  if (!isGrindingMachine.value || !values.length) return;
+  applyLimitsForParameter(values[values.length - 1]);
+});
 
 const isPositionButtonDisabled = computed(() => {
   const machineName = specialPurposeMachineDetailStore.machine;
 
-  // Check if machineName matches any of the specified values
   if (
     machineName === "JOURNAL FINISH-GRINDING_JOP_105" ||
     machineName === "JOURNAL FINISH-GRINDING_JOP_140" ||
     machineName === "JOURNAL FINISH-GRINDING_JOP_130"
   ) {
-    return true; // Disable the button
+    return true;
   }
 
-  return false; // Enable the button
+  return false;
 });
 
 </script>
 
 <template>
   <LayoutAuthenticatedSimple>
-    <SectionMain>
-      <div class="container mx-auto flex flex-col space-y-4">
+    <section class="spm-detail-page px-4 py-3 flex flex-col gap-3 overflow-hidden">
+      <div
+        v-if="specialPurposeMachineDetailStore.alertMessage"
+        :class="{
+          'alert': true,
+          'bg-emerald-500 border-black': specialPurposeMachineDetailStore.isSuccessMessage,
+          'bg-red-600 border-black': !specialPurposeMachineDetailStore.isSuccessMessage
+        }"
+      >
+        {{ specialPurposeMachineDetailStore.alertMessage }}
+      </div>
 
-        <div v-if="specialPurposeMachineDetailStore.alertMessage" 
-        :class="{ 'alert': true, 'bg-emerald-500 border-black': specialPurposeMachineDetailStore.isSuccessMessage,
-        'bg-red-600 border-black': !specialPurposeMachineDetailStore.isSuccessMessage }">
-          {{ specialPurposeMachineDetailStore.alertMessage }}
-        </div>
-
-        <BlurryHorizontalDivider />
-        <!-- Display machine information Start -->
-        <div class="grid grid-cols-1 gap-6 lg:grid-cols-5 mb-6 ml-24">
-          <CardBoxWidgetPlainWrap 
+      <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-5 gap-4 flex-shrink-0">
+        <CardBoxWidgetPlainWrap
           label="Machine Name"
           :parameter-value="specialPurposeMachineDetailStore.machine"
-          class="h-36">
-          </CardBoxWidgetPlainWrap>
-          <CardBoxWidgetPlainWrap label="Warning Limit:" class="h-36">
-            <div class="flex flex-row">
-              <div class="relative mt-2">
-                <input v-model="warningInput" type="number" class="w-full h-8 p-2 border-2 border-black rounded-lg" />
-              </div>
-              <button @click="updateWarning" class="text-blue-500  mx-2 mt-2">
-                <img class="w-12" src="@/assets/icons/update.svg " alt="">
-              </button>
+          class="h-36"
+        />
+        <CardBoxWidgetPlainWrap label="Warning Limit" class="h-36">
+          <div class="flex flex-row items-center">
+            <div class="relative mt-2">
+              <input v-model="warningInput" type="number" class="w-full h-8 p-2 border-2 border-black rounded-lg" />
             </div>
-          </CardBoxWidgetPlainWrap>
-
-          <CardBoxWidgetPlainWrap label="Critical Limit:" class="h-36">
-            <div class="flex flex-row">
-              <div class="relative mt-2">
-                <input v-model="criticalInput" type="number" class="w-full h-8 p-2 border-2 border-black rounded-lg" />
-              </div>
-              <button @click="updateCritical" class="text-blue-500 mx-2 mt-2">
-                <img class="w-12" src="@/assets/icons/update.svg " alt="">
-              </button>
+            <button type="button" @click="updateWarning" class="text-blue-500 mx-2 mt-2">
+              <img class="w-12" src="@/assets/icons/update.svg" alt="Update warning">
+            </button>
+          </div>
+        </CardBoxWidgetPlainWrap>
+        <CardBoxWidgetPlainWrap label="Critical Limit" class="h-36">
+          <div class="flex flex-row items-center">
+            <div class="relative mt-2">
+              <input v-model="criticalInput" type="number" class="w-full h-8 p-2 border-2 border-black rounded-lg" />
             </div>
-            
-          </CardBoxWidgetPlainWrap>
-          <CardBoxWidgetPlainWrap label="Parameters :" class="w-[550px] h-40">
-             <!-- New div to display available parameters -->
-            <div class="overflow-auto max-h-24">
-              <div v-for="(parameter, index) in availableParameters" :key="index">
-                <!-- Apply dynamic class based on parameter's item_state -->
-                <div :class="{'text-green-500': parameter.item_state === 'OK', 'text-yellow-500': parameter.item_state === 'WARNING', 'text-red-500': parameter.item_state === 'CRITICAL', 'opacity-50': selectedParameters.length >= 3 && !selectedParameters.includes(parameter.name)}">
-                  <input type="checkbox" :id="'parameter_' + index" v-model="selectedParameters" :value="parameter.name" :disabled="selectedParameters.length >= 3 && !selectedParameters.includes(parameter.name)">
-                  <label :for="'parameter_' + index" class="ml-2">{{ parameter.name }}</label>
+            <button type="button" @click="updateCritical" class="text-blue-500 mx-2 mt-2">
+              <img class="w-12" src="@/assets/icons/update.svg" alt="Update critical">
+            </button>
+          </div>
+        </CardBoxWidgetPlainWrap>
+        <CardBoxWidgetPlainWrap
+          v-if="isGrindingMachine"
+          label="Selected Parameter"
+          :parameter-value="formatGrindingParamLabel(activeGrindingParameter)"
+          class="h-36"
+          :title="activeGrindingParameter"
+        />
+        <div class="relative h-36 spm-param-dropdown">
+          <CardBoxWidgetPlainWrap label="Parameters" class="h-36">
+            <div
+              class="w-full mt-2 p-2 bg-slate-50 text-black border rounded-lg shadow cursor-pointer"
+              :title="selectedParameters.length ? selectedParameters[selectedParameters.length - 1] : ''"
+              @click.stop="toggleParamDropdown"
+            >
+              <div class="flex justify-between items-center gap-2">
+                <span class="mr-2 truncate">
+                  {{ selectedParameters.length ? formatGrindingParamLabel(selectedParameters[selectedParameters.length - 1]) : 'Select parameters' }}
+                </span>
+                <div class="flex items-center gap-1 flex-shrink-0">
+                  <div
+                    v-for="name in selectedParameters"
+                    :key="name"
+                    :class="[
+                      paramStateDot((availableParameters || []).find((item) => item.name === name)?.item_state),
+                      'w-4 h-4 rounded-full'
+                    ]"
+                  />
                 </div>
               </div>
             </div>
           </CardBoxWidgetPlainWrap>
-          
-
-          
-        </div>
-
-        <BlurryHorizontalDivider />
-
-        <div class="flex justify-center">
-          <div>
-            <label class="block mb-2 text-gray-700">From</label>
-            <TimePickerFlatEmitter :defaultDatetime="subtractHours(new Date(), 1)" type="from" @date-change="handleFromDateChange" />
-          </div>
-
-          <div class="ml-8">
-            <label class="block mb-2 text-gray-700">To</label>
-            <TimePickerFlatEmitter :defaultDatetime="new Date()" type="to" @date-change="handleToDateChange" />
-          </div>
-
-          <div class="flex flex-col items-center justify-end ml-8">
-            <BaseButton type="submit" color="info" label="Submit" @click="handleQuerySubmit" />
-          </div>
           <div
-            v-if="!isPositionButtonDisabled"
-            class="flex flex-col items-center justify-end ml-8"
+            v-if="isParamDropdownOpen"
+            class="absolute top-full left-0 w-full border rounded shadow bg-white z-30 mt-1"
+            @click.stop
           >
-            <BaseButton
-              type="button"
-              color="info"
-              label="POSITION"
-              @click="redirectToPosition"
-            />
+            <div class="p-2 max-h-48 overflow-y-auto m-1">
+              <input
+                type="text"
+                v-model="paramSearch"
+                placeholder="Search..."
+                class="w-full border rounded p-2 mb-2"
+              />
+              <label
+                v-for="(parameter, index) in filteredParameters"
+                :key="parameter.name || index"
+                class="flex items-center cursor-pointer p-2 hover:bg-gray-100"
+                :class="{ 'opacity-50': selectedParameters.length >= 3 && !selectedParameters.includes(parameter.name) }"
+                :title="parameter.name"
+              >
+                <input
+                  type="checkbox"
+                  class="mr-2"
+                  :value="parameter.name"
+                  v-model="selectedParameters"
+                  :disabled="selectedParameters.length >= 3 && !selectedParameters.includes(parameter.name)"
+                />
+                <span class="truncate">{{ formatGrindingParamLabel(parameter.name) }}</span>
+                <span
+                  :class="[paramStateDot(parameter.item_state), 'w-4 h-4 rounded-full ml-auto flex-shrink-0']"
+                />
+              </label>
+            </div>
           </div>
-          
         </div>
-
-        <BlurryHorizontalDivider />
-
-
-        
-        <!-- Please take a look at the graph  -->
-
-
-        <!-- <CardBox class="mb-8">
-          <div>
-            <DyLineChartMultiple :seriesData="seriesData" 
-            :warningLimit="warningLimit"
-            :criticalLimit="criticalLimit"
-            class="h-96"
-            @data-hovered="OnHoverCallBack" />
-          </div>
-        </CardBox>       -->
-
-        <BlurryHorizontalDivider />
-        <!-- <GraphLegend :data="hoverData"></GraphLegend> -->
       </div>
 
-      <div>
-    <h1>Stepline Chart</h1>
-    <SteplineChart :data="chartData" />
-  </div>
+      <div class="flex flex-wrap items-end gap-6 flex-shrink-0">
+        <div>
+          <label class="block mb-2 text-gray-700 dark:text-slate-300">From</label>
+          <TimePickerFlatEmitter :defaultDatetime="subtractHours(new Date(), 1)" type="from" @date-change="handleFromDateChange" />
+        </div>
+        <div>
+          <label class="block mb-2 text-gray-700 dark:text-slate-300">To</label>
+          <TimePickerFlatEmitter :defaultDatetime="new Date()" type="to" @date-change="handleToDateChange" />
+        </div>
+        <BaseButton type="submit" color="info" label="Submit" @click="handleQuerySubmit" />
+        <BaseButton
+          v-if="!isPositionButtonDisabled"
+          type="button"
+          color="info"
+          label="POSITION"
+          @click="redirectToPosition"
+        />
+      </div>
 
-    </SectionMain>
+      <div class="flex-1 min-h-0 flex flex-col">
+        <h1 class="text-lg font-semibold mb-1">Stepline Chart</h1>
+        <p
+          v-if="specialPurposeMachineDetailStore.chartEmptyMessage"
+          class="text-sm text-slate-500 mb-1"
+        >
+          {{ specialPurposeMachineDetailStore.chartEmptyMessage }}
+        </p>
+        <SteplineChart :data="chartData" />
+      </div>
+    </section>
   </LayoutAuthenticatedSimple>
 </template>
 
 <style scoped>
-/* Tailwind CSS classes for animation */
-@keyframes slideIn {
-  from {
-    transform: translateX(100%);
-  }
-  to {
-    transform: translateX(0);
-  }
+.spm-detail-page {
+  height: 100%;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
-/* Add your alert styles here */
+.spm-param-dropdown {
+  overflow: visible;
+}
+
+@keyframes slideIn {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
 .alert {
   @apply fixed top-10 left-1/2 transform -translate-x-1/2 text-white p-2 rounded-md border z-50;
   animation: slideIn 0.5s ease-out;
 }
-
 </style>

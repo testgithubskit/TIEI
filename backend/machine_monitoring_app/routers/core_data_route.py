@@ -972,10 +972,10 @@ def update_set_limit_method_spm(parameterName: str, setType: str,
     This api is used to update machine parameters set limit or reference signal
     """
 
-    if current_user.role != "admin":
+    if current_user.role not in ["admin", "maintenance_operator"]:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Not authorized to update, Only admin can update",
+            detail="Not authorized to update, only admin or operator can update",
             headers={"WWW-Authenticate": "Bearer"},
         )
 

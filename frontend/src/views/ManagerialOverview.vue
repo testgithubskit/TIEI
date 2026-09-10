@@ -46,24 +46,24 @@
           </div>
 
           <!-- ── Alert Tabs ── -->
-          <div class="noc-alert-tabs flex-shrink-0">
+          <div class="noc-alert-line flex-shrink-0">
             <button
               type="button"
-              class="noc-alert-tab"
+              class="noc-alert-line-item"
               :class="{ active: alertTab === 'active' }"
               @click="selectAlertTab('active')"
             >
-              ACTIVE ALERTS
-              <span class="noc-alert-count">{{ allAlerts.length }}</span>
+              <span class="noc-alert-line-label">Active Alerts</span>
+              <span class="noc-alert-line-count is-active">{{ allAlerts.length }}</span>
             </button>
             <button
               type="button"
-              class="noc-alert-tab"
+              class="noc-alert-line-item"
               :class="{ active: alertTab === 'pending' }"
               @click="selectAlertTab('pending')"
             >
-              PENDING ALERTS
-              <span class="noc-alert-count">{{ pendingAlerts.length }}</span>
+              <span class="noc-alert-line-label">Pending Alerts</span>
+              <span class="noc-alert-line-count is-pending">{{ pendingAlerts.length }}</span>
             </button>
           </div>
 
@@ -78,7 +78,7 @@
           </div>
 
           <!-- ── Scrollable Alert Feed ── -->
-          <div class="flex-1 overflow-y-auto noc-feed p-2">
+          <div class="flex-1 overflow-y-auto overflow-x-hidden noc-feed p-2">
             <div v-if="filteredAlerts.length === 0" class="noc-no-alerts flex flex-col items-center justify-center h-full py-8">
               <div class="w-10 h-10 mb-3 rounded-full flex items-center justify-center bg-emerald-500/10 text-emerald-500">
                 <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
@@ -90,7 +90,7 @@
             </div>
 
             <!-- One table for all lines so parameter dividers align to the longest name -->
-            <div v-else class="noc-line-alerts-list overflow-x-auto">
+            <div v-else class="noc-line-alerts-list">
               <table class="noc-alert-table">
                 <tbody v-for="line in groupedAlerts" :key="line.name">
                   <tr class="noc-line-sect-header">
@@ -112,7 +112,7 @@
                       'noc-alert-warn-row': alert.state === 'WARNING',
                       'noc-alert-disc-row': alert.state === 'DISCONNECTED'
                     }"
-                    @click="logParameterDetails(alert.paramDetails, alert.machineName, alert.group)"
+                    @click="handleAlertNavigate(alert)"
                   >
                     <td class="noc-machine-txt font-bold" :title="alert.machineName">
                       {{ formatMachineName(alert.machineName) }}
@@ -543,13 +543,9 @@
               <div
                    v-for="param in selectedMachineAlerts"
                    :key="`${param.source_machine_name || selectedMachine.machine_name}-${param.internal_parameter_name || param.actual_parameter_name}`"
-                   @click="logParameterDetails(
-                     param,
-                     param.source_machine_name || selectedMachine.machine_name,
-                     param.parameter_group || getParameterGroup(param.source_machine_name || selectedMachine.machine_name, param.internal_parameter_name)
-                   )"
+                   @click="openSelectedMachineParameter(param)"
                    class="noc-modal-param-card cursor-pointer flex flex-col border border-l-[5px] transition-all duration-150"
-                   :class="'noc-param-card-' + param.parameter_state.toLowerCase()">
+                   :class="'noc-param-card-' + (param.parameter_state || 'ok').toLowerCase()">
                 
                 <!-- Param Card Header (Splits into details and full-height axis tag) -->
                 <div class="flex items-stretch border-b border-dashed noc-param-header w-full">
@@ -557,7 +553,11 @@
                   <div class="flex-1 min-w-0 py-2 px-3 flex flex-col justify-between">
                     <!-- Row 1: Parameter Group Name -->
                     <span class="text-[12px] font-extrabold uppercase tracking-wide truncate font-mono noc-param-group-title">
-                      {{ param.signal_name || param.parameter_group || getParameterGroup(selectedMachine.machine_name, param.internal_parameter_name) }}
+                      {{
+                        isJournalGrindingMachine(selectedMachine)
+                          ? formatSpmAlertGroup(param)
+                          : (param.signal_name || param.parameter_group || getParameterGroup(selectedMachine.machine_name, param.internal_parameter_name))
+                      }}
                     </span>
                     
                     <!-- Row 2: Left-aligned Raw Name, Right-aligned Parameter Limit Type Badge -->
@@ -1160,6 +1160,7 @@ const allAlerts = computed(() => {
           alerts.push({
             // Combined air honing machine is T_B_OP200; signals stay on the param
             machineName: isPressure ? (m.machine_name || 'T_B_OP200') : (p.source_machine_name || m.machine_name),
+            hostMachineName: m.machine_name,
             lineName: m.lineName || line.name,
             group: isSpm ? formatSpmAlertGroup(p) : (p.parameter_group || 'Unknown Group'),
             displayName: (isPressure || isSpm) ? '' : (p.display_name || ''),
@@ -1202,6 +1203,7 @@ const pendingAlerts = computed(() => {
       machineName: isPressure
         ? (AIR_HONING_SIGNAL_NAMES.has(p.machine_name) ? 'T_B_OP200' : p.machine_name)
         : p.machine_name,
+      hostMachineName: p.machine_name,
       lineName: p.line_name,
       group: isSpm ? formatSpmAlertGroup(p) : (p.parameter_group || 'Unknown Group'),
       displayName: (isPressure || isSpm) ? '' : (p.display_name || ''),
@@ -1533,6 +1535,35 @@ function isLaserCladdingMachine(machine) {
   return String(name).toUpperCase().startsWith('LASER CLADDING');
 }
 
+function isSpecialPurposeMachine(machine) {
+  return isJournalGrindingMachine(machine) || isLaserCladdingMachine(machine);
+}
+
+function resolveSpmParameterName(param) {
+  return param?.actual_parameter_name
+    || param?.internal_parameter_name
+    || param?.name
+    || param?.parameter_name
+    || null;
+}
+
+function handleAlertNavigate(alert) {
+  const hostName = alert?.hostMachineName || alert?.machineName;
+  if (alert?.isSpm || isSpecialPurposeMachine(hostName) || isSpecialPurposeMachine(alert?.machineName)) {
+    openSpmDetail(
+      resolveJournalGrindingName(alert.paramDetails, hostName) || hostName,
+      resolveSpmParameterName(alert.paramDetails)
+    );
+    return;
+  }
+  logParameterDetails(
+    alert.paramDetails,
+    alert.machineName,
+    alert.group,
+    alert.isPressure
+  );
+}
+
 function resolveJournalGrindingName(param, machineName) {
   const candidates = [
     machineName,
@@ -1543,11 +1574,30 @@ function resolveJournalGrindingName(param, machineName) {
   return candidates.find((name) => isJournalGrindingMachine({ machine_name: name })) || null;
 }
 
-function openSpmDetail(machineName) {
-  specialPurposeMachineDetailStore.machine = machineName;
+function openSpmDetail(machineName, parameterName = null) {
+  selectedMachine.value = null;
+  specialPurposeMachineDetailStore.setSelectedMachine(machineName);
+  specialPurposeMachineDetailStore.setPendingParameter(parameterName || '');
+  specialPurposeMachineDetailStore.setReturnPath(router.currentRoute.value.fullPath || '/managerialOverview');
   specialPurposeMachinePositionStore.machine = machineName;
   navigationHistoryStore.addToHistory(router.currentRoute.value);
-  router.push('/spm-detail');
+  const query = { machine: machineName };
+  if (parameterName) query.param = parameterName;
+  router.push({ name: 'Spm Detail', query });
+}
+
+function openSelectedMachineParameter(param) {
+  const machine = selectedMachine.value;
+  if (!machine || !param) return;
+  if (isSpecialPurposeMachine(machine)) {
+    openSpmDetail(machine.machine_name, resolveSpmParameterName(param));
+    return;
+  }
+  logParameterDetails(
+    param,
+    param.source_machine_name || machine.machine_name,
+    param.parameter_group || ''
+  );
 }
 
 function getLineAccentClass(name) {
@@ -1580,11 +1630,6 @@ const selectedMachineAlerts = computed(() => {
 });
 
 function showMachineDetails(machine) {
-  if (isJournalGrindingMachine(machine)) {
-    openSpmDetail(machine.machine_name);
-    return;
-  }
-
   if (machine.is_combined_air_honing) {
     selectedMachine.value = machine;
     return;
@@ -1647,9 +1692,11 @@ function openOtherPlant() {
 }
 
 function logParameterDetails(param, machineName, parameterGroup, isPressureMachine = false) {
-  const spmMachineName = resolveJournalGrindingName(param, machineName);
+  const spmMachineName = resolveJournalGrindingName(param, machineName)
+    || (isSpecialPurposeMachine(selectedMachine.value) ? selectedMachine.value.machine_name : null)
+    || (isSpecialPurposeMachine(machineName) ? machineName : null);
   if (spmMachineName) {
-    openSpmDetail(spmMachineName);
+    openSpmDetail(spmMachineName, resolveSpmParameterName(param));
     return;
   }
 
@@ -1781,9 +1828,11 @@ onBeforeUnmount(() => {
 /* Dynamic theme background for the window behind the cards */
 .mo-bg-dark {
   background: #080d16 !important;
+  color-scheme: dark;
 }
 .mo-bg-light {
   background: #e2e8f0 !important;
+  color-scheme: light;
 }
 
 @keyframes pulse-shimmer {
@@ -1795,10 +1844,47 @@ onBeforeUnmount(() => {
 }
 
 /* Scrollbar styling */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: #0d1117; }
-::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #4a5568; }
+.noc-feed,
+.noc-filters,
+.noc-line-alerts-list {
+  scrollbar-width: thin;
+}
+.noc-dark,
+.noc-dark .noc-feed,
+.noc-dark .noc-filters,
+.noc-dark .noc-line-alerts-list {
+  color-scheme: dark;
+  scrollbar-color: #475569 #0d1117;
+}
+.noc-dark .noc-feed::-webkit-scrollbar,
+.noc-dark .noc-filters::-webkit-scrollbar,
+.noc-dark .noc-line-alerts-list::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.noc-dark .noc-feed::-webkit-scrollbar-track,
+.noc-dark .noc-filters::-webkit-scrollbar-track,
+.noc-dark .noc-line-alerts-list::-webkit-scrollbar-track {
+  background: #0d1117;
+}
+.noc-dark .noc-feed::-webkit-scrollbar-thumb,
+.noc-dark .noc-filters::-webkit-scrollbar-thumb,
+.noc-dark .noc-line-alerts-list::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 8px;
+  border: 2px solid #0d1117;
+}
+.noc-dark .noc-feed::-webkit-scrollbar-thumb:hover,
+.noc-dark .noc-filters::-webkit-scrollbar-thumb:hover,
+.noc-dark .noc-line-alerts-list::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+.noc-light .noc-feed,
+.noc-light .noc-filters,
+.noc-light .noc-line-alerts-list {
+  color-scheme: light;
+  scrollbar-color: #cbd5e1 #f8fafc;
+}
 
 /* ═══════════════════════════════════════════════
    NOC PANEL — CORE LAYOUT
@@ -1929,53 +2015,58 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid #334155;
   flex-shrink: 0;
 }
-.noc-alert-tabs {
+.noc-alert-line {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
   background: #0a0f16;
   border-bottom: 1px solid #334155;
 }
-.noc-alert-tab {
+.noc-alert-line-item {
   flex: 1;
   display: flex;
+  flex-direction: row;
   align-items: center;
-  justify-content: center;
+  justify-content: space-between;
   gap: 8px;
-  padding: 8px 10px 7px;
-  font-size: 11px;
-  font-weight: 800;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  color: #64748b;
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0d1117;
   cursor: pointer;
 }
-.noc-alert-tab:hover {
-  color: #94a3b8;
+.noc-alert-line-item.active {
+  border-color: #475569;
+  background: #111827;
 }
-.noc-alert-tab.active {
-  color: #e2e8f0;
-  border-bottom-color: #38bdf8;
-  background: rgba(56, 189, 248, 0.08);
-}
-.noc-alert-tab .noc-alert-count {
-  margin-left: 0;
-}
-.noc-alert-count {
-  margin-left: auto;
-  background: #1e2d3d;
-  color: #94a3b8;
+.noc-alert-line-label {
   font-size: 11px;
-  font-weight: 800;
-  padding: 2px 7px;
-  border-radius: 20px;
-  letter-spacing: 0.05em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  white-space: nowrap;
 }
+.noc-alert-line-item.active .noc-alert-line-label {
+  color: #e2e8f0;
+}
+.noc-alert-line-count {
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5ch;
+  text-align: right;
+  line-height: 1;
+}
+.noc-alert-line-count.is-active { color: #f87171; }
+.noc-alert-line-count.is-pending { color: #fbbf24; }
 
 /* ── Feed ── */
 .noc-feed {
   background: #0a0f16;
+  overflow-x: hidden;
 }
 
 /* ── Line Group ── */
@@ -2065,6 +2156,7 @@ onBeforeUnmount(() => {
   border: none !important;
   border-radius: 0;
   background: transparent;
+  overflow-x: hidden;
 }
 
 .noc-alert-row {
@@ -2398,11 +2490,13 @@ onBeforeUnmount(() => {
 .noc-light .noc-warn-label   { color: #b45309; }
 .noc-light .noc-crit-label   { color: #b91c1c; }
 .noc-light .noc-section-label { background: #f1f5f9; border-bottom-color: #e2e8f0; color: #94a3b8; }
-.noc-light .noc-alert-tabs { background: #f1f5f9; border-bottom-color: #e2e8f0; }
-.noc-light .noc-alert-tab { color: #64748b; }
-.noc-light .noc-alert-tab:hover { color: #334155; }
-.noc-light .noc-alert-tab.active { color: #0f172a; border-bottom-color: #0284c7; background: rgba(2, 132, 199, 0.08); }
-.noc-light .noc-alert-count  { background: #e2e8f0; color: #64748b; }
+.noc-light .noc-alert-line { background: #f8fafc; border-bottom-color: #e2e8f0; }
+.noc-light .noc-alert-line-item { background: #ffffff; border-color: #e2e8f0; }
+.noc-light .noc-alert-line-item.active { background: #f1f5f9; border-color: #cbd5e1; }
+.noc-light .noc-alert-line-label { color: #64748b; }
+.noc-light .noc-alert-line-item.active .noc-alert-line-label { color: #0f172a; }
+.noc-light .noc-alert-line-count.is-active { color: #dc2626; }
+.noc-light .noc-alert-line-count.is-pending { color: #d97706; }
 .noc-light .noc-feed         { background: #f8fafc; }
 .noc-light .noc-line-group   { border-bottom-color: #e2e8f0; }
 .noc-light .noc-line-header  { background: #f1f5f9; border-bottom-color: #e2e8f0; }
