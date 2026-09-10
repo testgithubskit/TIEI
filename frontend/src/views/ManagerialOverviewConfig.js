@@ -37,7 +37,7 @@ export const CONFIG = {
   // Used to render placeholder shimmering machines while API loads
   // Array index maps to line index: [line0, line1, line2, ...]
   // Display order is HEAD, CRANK, BLOCK.
-  defaultLineMachines: [38, 14, 7],
+  defaultLineMachines: [38, 17, 7],
 
   // ── Hover Interaction ───────────────────────────────────
   hoverScale: 1.15,       // Scale factor on hover
@@ -53,6 +53,8 @@ export const CONFIG = {
   machineAnchorYPercent: 0.30,
   // Air honing (mch1) art is lighter — scale up at rest to match mch.svg visual size
   honingIconScale: 1.15,
+  // Journal grinding (mch2) art — scale to match mch.svg visual size
+  grindingIconScale: 1.0,
 
   // ── Coordinate Offsets ──────────────────────────────────
   // Move all machines one more grid line backward so headings stay fully visible.

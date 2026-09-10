@@ -651,6 +651,7 @@ import { useRouter } from 'vue-router';
 import LayoutGuest from "@/layouts/LayoutGuest.vue";
 import machineSvg from '@/assets/shopfloor/mch.svg';
 import machineHonSvg from '@/assets/shopfloor/mch1.svg';
+import machineGrindSvg from '@/assets/shopfloor/mch2.svg';
 import tieiLogo from '@/assets/shopfloor/TIEI_Logo.png';
 import cmtiLogoColor from '@/assets/shopfloor/CMTI Logo.png';
 import cmtiLogoWhite from '@/assets/shopfloor/cmti_logo white.png';
@@ -659,6 +660,8 @@ import cmtiLogoWhite from '@/assets/shopfloor/cmti_logo white.png';
 import { useFactoryOverviewStore } from '../stores/FactoryOverviewStore';
 import { useFactoryPollOverviewStore } from '../stores/FactoryPollGridStore';
 import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore'; 
+import { useSpecialPurposeMachineDetailStore } from '@/stores/SpecialPurposeMachineDetailStore';
+import { useSpecialPurposeMachinePositionStore } from '@/stores/SpecialPurposeMachinePositionStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
 import { useDatabaseName } from '@/stores/DatabaseName';
 import { backendApi } from '@/services/apiServices';
@@ -791,6 +794,8 @@ const router = useRouter();
 const factoryStore = useFactoryOverviewStore();
 const factoryPollStore = useFactoryPollOverviewStore();
 const machineSamplingWithLimitsStore = useMachineSamplingWithLimitsStore();
+const specialPurposeMachineDetailStore = useSpecialPurposeMachineDetailStore();
+const specialPurposeMachinePositionStore = useSpecialPurposeMachinePositionStore();
 const navigationHistoryStore = useNavigationHistoryStore();
 
 const svgRef = ref(null);
@@ -992,7 +997,7 @@ function combineAirHoningSignals(rawMachines, lineName) {
   const machines = rawMachines || [];
   const signalMachines = machines.filter((machine) => (
     AIR_HONING_SIGNAL_NAMES.has(machine.machine_name)
-    || machine.is_pressure_machine === true
+    || (machine.parameters || []).some((param) => isPressureParameter(param))
   ));
 
   if (signalMachines.length <= 1) {
@@ -1038,7 +1043,8 @@ const uiLinesData = computed(() => {
 
   return rawLines.map(line => {
     const name = line.line_name;
-    const machines = combineAirHoningSignals(line.machines || [], name);
+    const machines = combineAirHoningSignals(line.machines || [], name)
+      .filter((machine) => !isLaserCladdingMachine(machine));
     const counts = { OK: 0, WARNING: 0, CRITICAL: 0, DISCONNECTED: 0 };
     machines.forEach(m => {
       const s = m.machine_state || 'OK';
@@ -1053,6 +1059,9 @@ const uiLinesData = computed(() => {
       });
     });
     return { name, counts, machines, alerts };
+  }).filter((line) => {
+    const lineName = String(line.name || '').toUpperCase();
+    return LINE_DISPLAY_ORDER.includes(lineName) && (line.machines || []).length > 0;
   }).sort((a, b) => {
     const aPriority = linePriority.get(String(a.name).toUpperCase()) ?? Number.MAX_SAFE_INTEGER;
     const bPriority = linePriority.get(String(b.name).toUpperCase()) ?? Number.MAX_SAFE_INTEGER;
@@ -1140,6 +1149,8 @@ const allAlerts = computed(() => {
       // Check individual parameters for WARNING/CRITICAL only (not DISCONNECTED)
       (m.parameters || []).forEach(p => {
         if (p.parameter_state === 'WARNING' || p.parameter_state === 'CRITICAL') {
+          const isSpm = isJournalGrindingMachine(m)
+            || isJournalGrindingMachine({ machine_name: p.source_machine_name });
           const isPressure = (
             p.is_pressure_machine === true
             || p.parameter_group === 'AIR_PRESSURE'
@@ -1150,16 +1161,14 @@ const allAlerts = computed(() => {
             // Combined air honing machine is T_B_OP200; signals stay on the param
             machineName: isPressure ? (m.machine_name || 'T_B_OP200') : (p.source_machine_name || m.machine_name),
             lineName: m.lineName || line.name,
-            group: p.parameter_group || 'Unknown Group',
-            // Pressure: no axis column
-            displayName: isPressure
-              ? ''
-              : (p.display_name || ''),
+            group: isSpm ? formatSpmAlertGroup(p) : (p.parameter_group || 'Unknown Group'),
+            displayName: (isPressure || isSpm) ? '' : (p.display_name || ''),
             value: formatParameterDisplayValue(p, isPressure),
-            unit: isPressure ? '' : (p.unit_short_name || ''),
+            unit: (isPressure || isSpm) ? '' : sanitizeAlertUnit(p.unit_short_name),
             state: p.parameter_state,
             paramDetails: p,
             isPressure,
+            isSpm,
           });
         }
       });
@@ -1179,7 +1188,10 @@ const allAlerts = computed(() => {
 });
 
 const pendingAlerts = computed(() => {
-  const alerts = (pendingAlertsRaw.value || []).map((p) => {
+  const alerts = (pendingAlertsRaw.value || [])
+    .filter((p) => !isLaserCladdingMachine({ machine_name: p.machine_name }))
+    .map((p) => {
+    const isSpm = isJournalGrindingMachine({ machine_name: p.machine_name });
     const isPressure = (
       p.is_pressure_machine === true
       || p.parameter_group === 'AIR_PRESSURE'
@@ -1191,15 +1203,15 @@ const pendingAlerts = computed(() => {
         ? (AIR_HONING_SIGNAL_NAMES.has(p.machine_name) ? 'T_B_OP200' : p.machine_name)
         : p.machine_name,
       lineName: p.line_name,
-      group: p.parameter_group || 'Unknown Group',
-      displayName: isPressure ? '' : (p.display_name || ''),
+      group: isSpm ? formatSpmAlertGroup(p) : (p.parameter_group || 'Unknown Group'),
+      displayName: (isPressure || isSpm) ? '' : (p.display_name || ''),
       value: formatParameterDisplayValue({
         parameter_value: p.parameter_value,
         actual_parameter_name: p.actual_parameter_name,
         parameter_group: p.parameter_group,
         is_pressure_machine: isPressure,
       }, isPressure),
-      unit: isPressure ? '' : (p.unit_short_name || ''),
+      unit: (isPressure || isSpm) ? '' : sanitizeAlertUnit(p.unit_short_name),
       state: p.parameter_state,
       paramDetails: {
         actual_parameter_name: p.actual_parameter_name,
@@ -1210,6 +1222,7 @@ const pendingAlerts = computed(() => {
         signal_name: p.machine_name,
       },
       isPressure,
+      isSpm,
     };
   });
 
@@ -1410,8 +1423,27 @@ function getLineDotClass(name) {
   return mapping[name.toUpperCase()] || 'bg-slate-400';
 }
 
+function sanitizeAlertUnit(unit) {
+  const text = String(unit ?? '').trim();
+  if (!text || /^(none|null|nan)$/i.test(text)) return '';
+  return text;
+}
+
+function formatSpmAlertGroup(param) {
+  const name = param?.actual_parameter_name || param?.internal_parameter_name || '';
+  const match = String(name).match(/^(MeasurementData\([^)]+\))/i);
+  if (match) return match[1];
+  const cut = String(name).split(/_JOURNAL/i)[0];
+  if (cut && cut !== name) return cut;
+  return param?.parameter_group || name || '';
+}
+
 function formatMachineName(name) {
   if (!name) return '';
+  if (isJournalGrindingMachine({ machine_name: name })) {
+    const match = String(name).match(/JOP[_\s-]*(\d+)/i);
+    return match ? `JOP_${match[1]}` : name;
+  }
   return name.startsWith('T_') ? name.substring(2) : name;
 }
 
@@ -1430,42 +1462,92 @@ function formatParameterDisplayValue(param, isPressure = false) {
 }
 
 function getMachineIcon(machine) {
-  return isAirHoningMachine(machine) ? machineHonSvg : machineSvg;
+  if (isAirHoningMachine(machine)) return machineHonSvg;
+  if (isJournalGrindingMachine(machine)) return machineGrindSvg;
+  return machineSvg;
 }
 
 function getHoningIconScale() {
   return CONFIG.honingIconScale ?? CONFIG.hoverScale ?? 1.15;
 }
 
+function getGrindingIconScale() {
+  return CONFIG.grindingIconScale ?? CONFIG.hoverScale ?? 1.15;
+}
+
+function getSpecialIconScale(machine) {
+  if (isAirHoningMachine(machine)) return getHoningIconScale();
+  if (isJournalGrindingMachine(machine)) return getGrindingIconScale();
+  return 1;
+}
+
 function getMachineIconWidth(machine) {
-  const scale = isAirHoningMachine(machine) ? getHoningIconScale() : 1;
-  return CONFIG.machineWidth * scale;
+  return CONFIG.machineWidth * getSpecialIconScale(machine);
 }
 
 function getMachineIconHeight(machine) {
-  const scale = isAirHoningMachine(machine) ? getHoningIconScale() : 1;
-  return CONFIG.machineHeight * scale;
+  return CONFIG.machineHeight * getSpecialIconScale(machine);
 }
 
 function getMachineIconX(machine) {
   const honingOffset = isAirHoningMachine(machine) ? (CONFIG.honingIconOffsetX || 0) : 0;
+  const grindingOffset = isJournalGrindingMachine(machine) ? (CONFIG.grindingIconOffsetX || 0) : 0;
   return getMachineX(machine)
     + (CONFIG.machineWidth - getMachineIconWidth(machine)) / 2
-    + honingOffset;
+    + honingOffset
+    + grindingOffset;
 }
 
 function getMachineIconY(machine) {
   const honingOffset = isAirHoningMachine(machine) ? (CONFIG.honingIconOffsetY || 0) : 0;
+  const grindingOffset = isJournalGrindingMachine(machine) ? (CONFIG.grindingIconOffsetY || 0) : 0;
   return getMachineY(machine)
     + (CONFIG.machineHeight - getMachineIconHeight(machine)) / 2
-    + honingOffset;
+    + honingOffset
+    + grindingOffset;
+}
+
+function isPressureParameter(param) {
+  return param?.parameter_group === 'AIR_PRESSURE'
+    || param?.actual_parameter_name === 'AIR_PRESSURE';
 }
 
 function isAirHoningMachine(machine) {
-  return machine?.is_pressure_machine === true
+  return machine?.is_combined_air_honing === true
     || machine?.machine_name === '2nd Rough'
     || machine?.machine_name === '4th Finish'
-    || (machine?.parameters || []).some((p) => p.is_pressure_machine || p.parameter_group === 'AIR_PRESSURE');
+    || (machine?.parameters || []).some((p) => isPressureParameter(p));
+}
+
+function isJournalGrindingMachine(machine) {
+  const name = String(
+    typeof machine === 'string' ? machine : (machine?.machine_name || '')
+  ).toUpperCase();
+  if (!name) return false;
+  return (name.includes('JOURNAL') && name.includes('GRINDING'))
+    || /JOP[_\s-]*(105|130|140)/.test(name);
+}
+
+function isLaserCladdingMachine(machine) {
+  const name = typeof machine === 'string' ? machine : (machine?.machine_name || '');
+  return String(name).toUpperCase().startsWith('LASER CLADDING');
+}
+
+function resolveJournalGrindingName(param, machineName) {
+  const candidates = [
+    machineName,
+    param?.machine_name,
+    param?.source_machine_name,
+    param?.signal_name,
+  ].filter(Boolean);
+  return candidates.find((name) => isJournalGrindingMachine({ machine_name: name })) || null;
+}
+
+function openSpmDetail(machineName) {
+  specialPurposeMachineDetailStore.machine = machineName;
+  specialPurposeMachinePositionStore.machine = machineName;
+  navigationHistoryStore.addToHistory(router.currentRoute.value);
+  router.push('/spm-detail');
 }
 
 function getLineAccentClass(name) {
@@ -1498,14 +1580,17 @@ const selectedMachineAlerts = computed(() => {
 });
 
 function showMachineDetails(machine) {
+  if (isJournalGrindingMachine(machine)) {
+    openSpmDetail(machine.machine_name);
+    return;
+  }
+
   if (machine.is_combined_air_honing) {
     selectedMachine.value = machine;
     return;
   }
 
-  const pressureParam = machine.is_pressure_machine
-    ? machine.parameters?.[0]
-    : machine.parameters?.find((param) => param.is_pressure_machine);
+  const pressureParam = (machine.parameters || []).find((param) => isPressureParameter(param));
 
   if (pressureParam) {
     logParameterDetails(
@@ -1562,6 +1647,12 @@ function openOtherPlant() {
 }
 
 function logParameterDetails(param, machineName, parameterGroup, isPressureMachine = false) {
+  const spmMachineName = resolveJournalGrindingName(param, machineName);
+  if (spmMachineName) {
+    openSpmDetail(spmMachineName);
+    return;
+  }
+
   const isPressure = (
     isPressureMachine
     || param?.is_pressure_machine === true

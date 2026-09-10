@@ -729,7 +729,6 @@ def _build_pressure_machine_json(machine_id, machine_name, warning_limit, critic
         'parameter_type': 'increasing',
         'unit_name': None,
         'unit_short_name': None,
-        'is_pressure_machine': True,
     }
 
     return {
@@ -737,7 +736,6 @@ def _build_pressure_machine_json(machine_id, machine_name, warning_limit, critic
         'machine_state': parameter_state,
         'count': machine_count,
         'parameters': [parameter_json],
-        'is_pressure_machine': True,
     }
 
 
@@ -1371,6 +1369,131 @@ def custom_sort_key(machine_name):
     return [part if i % 2 == 0 else int(part) for i, part in enumerate(parts)]
 def alphanumeric_key(s):
     return [int(text) if text.isdigit() else text for text in re.split('([0-9]+)', s)]
+
+
+def _is_journal_grinding_machine(machine_name: str) -> bool:
+    return str(machine_name or '').upper().startswith('JOURNAL FINISH-GRINDING')
+
+
+def _is_laser_cladding_machine(machine_name: str) -> bool:
+    return str(machine_name or '').upper().startswith('LASER CLADDING')
+
+
+def _spm_measurement_label(param_name: str) -> str:
+    """MeasurementData(WHL_SPINDLE_LOAD)_JOURNAL_GRINDING_JOP105 -> MeasurementData(WHL_SPINDLE_LOAD)."""
+    name = str(param_name or '')
+    match = re.match(r'(MeasurementData\([^)]+\))', name, re.I)
+    if match:
+        return match.group(1)
+    upper = name.upper()
+    marker = '_JOURNAL'
+    idx = upper.find(marker)
+    if idx > 0:
+        return name[:idx]
+    return name
+
+
+def _clean_unit_name(value) -> Optional[str]:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text or text.lower() in ('none', 'null', 'nan'):
+        return None
+    return text
+
+def _journal_grinding_live_payload(machine):
+    """Live state for journal grinders using the same RTPA source as /SPMmachines_2.
+
+    SPM overview only flags CRITICAL (condition id 3). The manager map also
+    surfaces WARNING so OK / warning / critical match the rest of the shopfloor.
+    """
+    parameters = []
+    counts = {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}
+    for rtpa in RealTimeParameterActive.select(
+        lambda parameter: parameter.machine_parameter.machine == machine
+    ):
+        mp = rtpa.machine_parameter
+        pg = mp.parameter_group
+        cond = rtpa.parameter_condition.name if rtpa.parameter_condition else 'OK'
+        value = rtpa.value
+        if value is not None and isinstance(value, float) and math.isnan(value):
+            value = None
+        unit = mp.unit
+        param_name = mp.name or ''
+        unit_short = _clean_unit_name(unit.short_name if unit else None)
+        unit_name = _clean_unit_name(unit.name if unit else None)
+        parameters.append({
+            'actual_parameter_name': param_name,
+            'display_name': '',
+            'internal_parameter_name': mp.internal_parameter_name or param_name,
+            'latest_update_time': int(rtpa.time.timestamp() * 1000) if rtpa.time else None,
+            'parameter_value': value,
+            'parameter_state': cond or 'OK',
+            'warning_limit': mp.warning_limit,
+            'critical_limit': mp.critical_limit,
+            'parameter_group': _spm_measurement_label(param_name) or (pg.group_name if pg else None),
+            'parameter_type': (pg.parameter_type if pg and pg.parameter_type else mp.parameter_type),
+            'unit_name': unit_name,
+            'unit_short_name': unit_short,
+        })
+        if cond in counts:
+            counts[cond] += 1
+
+    if counts['CRITICAL'] > 0:
+        state = 'CRITICAL'
+    elif counts['WARNING'] > 0:
+        state = 'WARNING'
+    else:
+        state = 'OK'
+    return state, counts, parameters
+
+
+def _attach_journal_grinders_to_crank(json_list):
+    """Place journal grinders on CRANK using SPM live parameter state."""
+    crank_line = next(
+        (line for line in json_list if str(line.get('line_name') or '').upper() == 'CRANK'),
+        None,
+    )
+    if crank_line is None:
+        crank_line = {
+            'line_name': 'CRANK',
+            'machines': [],
+            'line_state': 'OK',
+            'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0},
+        }
+        json_list.append(crank_line)
+
+    crank_line['machines'] = [
+        machine for machine in (crank_line.get('machines') or [])
+        if not _is_journal_grinding_machine(machine.get('machine_name'))
+    ]
+    crank_line['count'] = {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}
+    for machine in crank_line['machines']:
+        state = machine.get('machine_state') or 'OK'
+        if state in crank_line['count']:
+            crank_line['count'][state] += 1
+
+    for journal_machine in select(m for m in Machine if m.name.startswith('JOURNAL FINISH-GRINDING')):
+        state, counts, parameters = _journal_grinding_live_payload(journal_machine)
+        crank_line['machines'].append({
+            'machine_name': journal_machine.name,
+            'parameters': parameters,
+            'machine_state': state,
+            'count': counts,
+        })
+        crank_line['count'][state] += 1
+
+    crank_line['machines'].sort(key=lambda machine: (
+        1 if _is_journal_grinding_machine(machine['machine_name']) else 0,
+        alphanumeric_key(machine['machine_name'] or ''),
+    ))
+    if crank_line['count']['CRITICAL'] > 0:
+        crank_line['line_state'] = 'CRITICAL'
+    elif crank_line['count']['WARNING'] > 0:
+        crank_line['line_state'] = 'WARNING'
+    else:
+        crank_line['line_state'] = 'OK'
+    return json_list
 
 @db_session(optimistic=False)
 def get_real_time_parameters_data():
@@ -7442,6 +7565,8 @@ def get_real_time_parameters_data_mtlinki_new_layout():
                          'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
         # Iterate over unique machines within the location
         for machine_name, machine_data in location_data.groupby('machine_name', sort=False):
+            if _is_laser_cladding_machine(machine_name) or _is_journal_grinding_machine(machine_name):
+                continue
             machine_json = {'machine_name': machine_name, 'parameters': [], 'machine_state': 'OK',
                             'count': {'OK': 0, 'WARNING': 0, 'CRITICAL': 0, 'DISCONNECTED': 0}}
 
@@ -7493,9 +7618,9 @@ def get_real_time_parameters_data_mtlinki_new_layout():
                         machine_json['machine_state'] = 'DISCONNECTED'
                         location_json['count']['DISCONNECTED'] += 1
                         machine_disconnected = True
-                    elif cycle_time_limits.status == 'ACTIVE':
-                        # Skip special purpose machines - don't count them
-                        machine_disconnected = True  # Mark as processed to skip parameter-level logic
+                    elif cycle_time_limits.status == 'ACTIVE' and not _is_journal_grinding_machine(machine_name):
+                        # Skip laser cladding / other SPM — journal grinders stay on the crank map
+                        machine_disconnected = True
             
             # If not machine-level disconnected, use parameter-level logic
             if not machine_disconnected:
@@ -7514,6 +7639,9 @@ def get_real_time_parameters_data_mtlinki_new_layout():
             machine_json['count'] = machine_count
             location_json['machines'].append(machine_json)
 
+        if not location_json['machines']:
+            continue
+
         # Determine line state based on counts
         if location_json['count']['CRITICAL'] > 0:
             location_json['line_state'] = 'CRITICAL'
@@ -7523,6 +7651,7 @@ def get_real_time_parameters_data_mtlinki_new_layout():
         json_list.append(location_json)
 
     json_list, _ = _merge_pressure_machines_into_lines(json_list)
+    json_list = _attach_journal_grinders_to_crank(json_list)
 
     response = {"lines": json_list}
     return response

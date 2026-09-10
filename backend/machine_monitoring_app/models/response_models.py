@@ -699,14 +699,12 @@ class Parameter_new(BaseModel):
     parameter_type: Optional[str] = None
     unit_name: Optional[str] = None
     unit_short_name: Optional[str] = None
-    is_pressure_machine: Optional[bool] = None
 
 class Machine_new(BaseModel):
     machine_name: str
     machine_state: str
     count: Dict[str, int]
     parameters: List[Parameter_new]
-    is_pressure_machine: Optional[bool] = None
 
 class Line_new(BaseModel):
     line_name: str
@@ -732,7 +730,6 @@ class new_Parameter(BaseModel):
     parameter_type: Optional[str] = None
     unit_name: Optional[str] = None
     unit_short_name: Optional[str] = None
-    is_pressure_machine: Optional[bool] = None
 
 class new_MachineCount(BaseModel):
     OK: int
@@ -746,7 +743,6 @@ class new_Machine(BaseModel):
     machine_state: str
     count: new_MachineCount
     parameters: List[new_Parameter]
-    is_pressure_machine: Optional[bool] = None
 
 
 class new_LineCount(BaseModel):

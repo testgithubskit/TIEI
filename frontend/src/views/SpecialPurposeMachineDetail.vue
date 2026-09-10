@@ -190,21 +190,6 @@ const isPositionButtonDisabled = computed(() => {
     <SectionMain>
       <div class="container mx-auto flex flex-col space-y-4">
 
-        <div class="w-auto h-8 flex">
-          <!-- <BaseButton type="submit" color="infolightDark" label="Back" @click="handleBack" /> -->
-          <div class="flex flex-col items-center justify-end ml-8">
-            <BaseButton
-  type="submit"
-  color="info"
-  label="POSITION"
-  @click="redirectToPosition"
-  :disabled="isPositionButtonDisabled"
-/>
-          </div>
-          
-        </div>
-     
-
         <div v-if="specialPurposeMachineDetailStore.alertMessage" 
         :class="{ 'alert': true, 'bg-emerald-500 border-black': specialPurposeMachineDetailStore.isSuccessMessage,
         'bg-red-600 border-black': !specialPurposeMachineDetailStore.isSuccessMessage }">
@@ -273,6 +258,17 @@ const isPositionButtonDisabled = computed(() => {
 
           <div class="flex flex-col items-center justify-end ml-8">
             <BaseButton type="submit" color="info" label="Submit" @click="handleQuerySubmit" />
+          </div>
+          <div
+            v-if="!isPositionButtonDisabled"
+            class="flex flex-col items-center justify-end ml-8"
+          >
+            <BaseButton
+              type="button"
+              color="info"
+              label="POSITION"
+              @click="redirectToPosition"
+            />
           </div>
           
         </div>
