@@ -43,9 +43,9 @@ export const CONFIG = {
   hoverScale: 1.15,       // Scale factor on hover
 
   // ── View Fitting ────────────────────────────────────────
-  viewPadding: 80,        // Padding around auto-fit bounding box (SVG units)
-  fitZoomMultiplier: 1.061, // Keep the fitted isometric view at ~89%
-  minFitZoom: 0.85,       // Never let the fitted view drop below 85%
+  viewPadding: 90,        // Padding around auto-fit bounding box (SVG units)
+  fitZoomMultiplier: 1,   // Fit exactly to the visible SVG area (no forced zoom)
+  minFitZoom: 0,          // Allow the view to shrink so every machine stays on screen
 
   // ── Machine Image Sizing & Anchoring ────────────────────
   machineWidth: 75,
@@ -109,7 +109,7 @@ export const CONFIG = {
 
     // Manual overrides and offsets (U/V coordinate offsets) for each line label
     lines: {
-      BLOCK: { text: 'BLOCK', uOffset: 0.25, vOffset: -0.53, textColor: '#ffffff', bgColor: '#000000', borderColor: '#ffffff' },
+      BLOCK: { text: 'BLOCK', uOffset: 0.75, vOffset: -0.53, textColor: '#ffffff', bgColor: '#000000', borderColor: '#ffffff' },
       CRANK: { text: 'CRANK', uOffset: -0.25, vOffset: -0.53, textColor: '#ffffff', bgColor: '#000000', borderColor: '#ffffff' },
       HEAD: { text: 'HEAD', uOffset: -1.25, vOffset: -0.53, textColor: '#ffffff', bgColor: '#000000', borderColor: '#ffffff' }
     }

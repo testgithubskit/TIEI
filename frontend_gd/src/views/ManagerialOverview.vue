@@ -35,6 +35,10 @@
                 <div class="noc-metric-value noc-crit">{{ totalCritical }}</div>
                 <div class="noc-metric-label noc-crit-label">CRITICAL</div>
               </div>
+              <div class="noc-metric-tile noc-metric-disc">
+                <div class="noc-metric-value noc-disc">{{ totalDisconnected }}</div>
+                <div class="noc-metric-label noc-disc-label">OFFLINE</div>
+              </div>
             </div>
 
             <!-- ── Status Summary Bar ── -->
@@ -42,28 +46,30 @@
               <div class="noc-status-bar-fill noc-bar-ok"    :style="{ flex: totalOk }"></div>
               <div class="noc-status-bar-fill noc-bar-warn"  :style="{ flex: totalWarning }"></div>
               <div class="noc-status-bar-fill noc-bar-crit"  :style="{ flex: totalCritical }"></div>
+              <div class="noc-status-bar-fill noc-bar-disc"  :style="{ flex: totalDisconnected }"></div>
             </div>
           </div>
 
           <!-- ── Alert Tabs ── -->
-          <div class="noc-alert-tabs flex-shrink-0">
+          <div class="noc-alert-line flex-shrink-0">
+            <span class="noc-alert-heading">Parameter Alerts</span>
             <button
               type="button"
-              class="noc-alert-tab"
+              class="noc-alert-line-item"
               :class="{ active: alertTab === 'active' }"
               @click="selectAlertTab('active')"
             >
-              ACTIVE ALERTS
-              <span class="noc-alert-count">{{ allAlerts.length }}</span>
+              <span class="noc-alert-line-label">Active</span>
+              <span class="noc-alert-line-count is-active">{{ allAlerts.length }}</span>
             </button>
             <button
               type="button"
-              class="noc-alert-tab"
+              class="noc-alert-line-item"
               :class="{ active: alertTab === 'pending' }"
               @click="selectAlertTab('pending')"
             >
-              PENDING ALERTS
-              <span class="noc-alert-count">{{ pendingAlerts.length }}</span>
+              <span class="noc-alert-line-label">Pending</span>
+              <span class="noc-alert-line-count is-pending">{{ pendingAlerts.length }}</span>
             </button>
           </div>
 
@@ -78,7 +84,7 @@
           </div>
 
           <!-- ── Scrollable Alert Feed ── -->
-          <div class="flex-1 overflow-y-auto noc-feed p-2">
+          <div class="flex-1 overflow-y-auto overflow-x-hidden noc-feed p-2">
             <div v-if="filteredAlerts.length === 0" class="noc-no-alerts flex flex-col items-center justify-center h-full py-8">
               <div class="w-10 h-10 mb-3 rounded-full flex items-center justify-center bg-emerald-500/10 text-emerald-500">
                 <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
@@ -90,7 +96,7 @@
             </div>
 
             <!-- One table for all lines so parameter dividers align to the longest name -->
-            <div v-else class="noc-line-alerts-list overflow-x-auto">
+            <div v-else class="noc-line-alerts-list">
               <table class="noc-alert-table">
                 <tbody v-for="line in groupedAlerts" :key="line.name">
                   <tr class="noc-line-sect-header">
@@ -518,8 +524,19 @@
           <!-- Modal Body Content -->
           <div class="flex-1 overflow-y-auto p-4 pb-12 space-y-4 noc-modal-body">
             
+            <!-- Disconnected Status -->
+            <div v-if="isSelectedMachineDisconnected" class="flex flex-col items-center justify-center py-10 px-4 text-center noc-nominal-state">
+              <div class="noc-nominal-icon-container p-3.5 mb-4 border flex items-center justify-center noc-disconnected-icon">
+                <svg class="w-6 h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
+                  <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/>
+                </svg>
+              </div>
+              <span class="text-sm font-black uppercase tracking-wider text-slate-400">MACHINE DISCONNECTED</span>
+              <span class="text-[9px] font-bold text-slate-400 mt-1.5 uppercase tracking-wide">NO LIVE DATA FROM THIS MACHINE</span>
+            </div>
+
             <!-- OK Status (System Nominal Empty State) -->
-            <div v-if="selectedMachineAlerts.length === 0" class="flex flex-col items-center justify-center py-10 px-4 text-center noc-nominal-state">
+            <div v-else-if="selectedMachineAlerts.length === 0" class="flex flex-col items-center justify-center py-10 px-4 text-center noc-nominal-state">
               <div class="noc-nominal-icon-container p-3.5 mb-4 border flex items-center justify-center">
                 <svg class="w-6 h-6 text-emerald-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="3">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/>
@@ -861,6 +878,7 @@ const isoToScreen = (u, v) => {
 };
 
 // ── Zoom & Pan ──
+const VIEW_REF_W = 1200;
 const zoomScale = ref(1.0);
 const viewBoxX = ref(0);
 const viewBoxY = ref(0);
@@ -869,8 +887,20 @@ const viewBoxH = ref(800);
 const isPanning = ref(false);
 const startX = ref(0);
 const startY = ref(0);
+const userAdjustedView = ref(false);
+let svgResizeObserver = null;
 
 const computedViewBox = computed(() => `${viewBoxX.value} ${viewBoxY.value} ${viewBoxW.value} ${viewBoxH.value}`);
+
+const getSvgAspect = () => {
+  const svg = svgRef.value;
+  if (svg) {
+    const rect = svg.getBoundingClientRect();
+    if (rect.width > 2 && rect.height > 2) return rect.width / rect.height;
+  }
+  if (viewBoxH.value > 0) return viewBoxW.value / viewBoxH.value;
+  return 1200 / 800;
+};
 
 const handleMouseDown = (event) => {
   if (event.button === 1) {
@@ -891,6 +921,7 @@ const handleMouseMove = (event) => {
   const rect = svg.getBoundingClientRect();
   viewBoxX.value -= dx * (viewBoxW.value / rect.width);
   viewBoxY.value -= dy * (viewBoxH.value / rect.height);
+  userAdjustedView.value = true;
 };
 const handleMouseUp = (event) => { if (event.button === 1) isPanning.value = false; };
 const handleMouseLeave = () => { isPanning.value = false; };
@@ -904,33 +935,40 @@ const handleWheel = (event) => {
   const svgMouseX = viewBoxX.value + (mouseX / rect.width) * viewBoxW.value;
   const svgMouseY = viewBoxY.value + (mouseY / rect.height) * viewBoxH.value;
   const zoomFactor = event.deltaY < 0 ? 1.15 : 1 / 1.15;
-  const newScale = Math.max(0.4, Math.min(6.0, zoomScale.value * zoomFactor));
+  const newScale = Math.max(0.25, Math.min(6.0, zoomScale.value * zoomFactor));
   if (newScale === zoomScale.value) return;
-  const newW = 1200 / newScale;
-  const newH = 800 / newScale;
+  const ar = getSvgAspect();
+  const newW = VIEW_REF_W / newScale;
+  const newH = newW / ar;
   viewBoxX.value = svgMouseX - (mouseX / rect.width) * newW;
   viewBoxY.value = svgMouseY - (mouseY / rect.height) * newH;
   zoomScale.value = newScale;
   viewBoxW.value = newW;
   viewBoxH.value = newH;
+  userAdjustedView.value = true;
 };
 
 const zoomToScale = (targetScale) => {
-  const newScale = Math.max(0.4, Math.min(6.0, targetScale));
+  const newScale = Math.max(0.25, Math.min(6.0, targetScale));
   if (newScale === zoomScale.value) return;
   const cx = viewBoxX.value + viewBoxW.value / 2;
   const cy = viewBoxY.value + viewBoxH.value / 2;
-  const newW = 1200 / newScale;
-  const newH = 800 / newScale;
+  const ar = getSvgAspect();
+  const newW = VIEW_REF_W / newScale;
+  const newH = newW / ar;
   viewBoxX.value = cx - newW / 2;
   viewBoxY.value = cy - newH / 2;
   zoomScale.value = newScale;
   viewBoxW.value = newW;
   viewBoxH.value = newH;
+  userAdjustedView.value = true;
 };
 const zoomIn = () => zoomToScale(zoomScale.value * 1.25);
 const zoomOut = () => zoomToScale(zoomScale.value / 1.25);
-const resetZoom = () => fitView();
+const resetZoom = () => {
+  userAdjustedView.value = false;
+  fitView();
+};
 
 const fitView = () => {
   const machines = placedMachines.value;
@@ -940,9 +978,9 @@ const fitView = () => {
   }
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   machines.forEach(m => {
-    const x = getMachineX(m), y = getMachineY(m);
+    const x = getMachineIconX(m), y = getMachineIconY(m);
     minX = Math.min(minX, x); minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x + CONFIG.machineWidth); maxY = Math.max(maxY, y + CONFIG.machineHeight);
+    maxX = Math.max(maxX, x + getMachineIconWidth(m)); maxY = Math.max(maxY, y + getMachineIconHeight(m));
   });
   // Include heading box corners so labels like BLOCK are never clipped by Fit.
   lineLabels.value.forEach((label) => {
@@ -962,21 +1000,21 @@ const fitView = () => {
   });
   const pad = CONFIG.viewPadding || 80;
   minX -= pad; minY -= pad; maxX += pad; maxY += pad;
-  const bw = maxX - minX, bh = maxY - minY;
-  const ar = 1200 / 800;
+  const bw = Math.max(1, maxX - minX), bh = Math.max(1, maxY - minY);
+  const ar = getSvgAspect();
   let fitW, fitH;
   if (bw / bh > ar) { fitW = bw; fitH = bw / ar; } else { fitH = bh; fitW = bh * ar; }
   const fitZoomMultiplier = CONFIG.fitZoomMultiplier || 1;
   fitW /= fitZoomMultiplier;
   fitH /= fitZoomMultiplier;
   const minFitZoom = CONFIG.minFitZoom || 0;
-  if (minFitZoom > 0 && 1200 / fitW < minFitZoom) {
-    fitW = 1200 / minFitZoom;
-    fitH = 800 / minFitZoom;
+  if (minFitZoom > 0 && VIEW_REF_W / fitW < minFitZoom) {
+    fitW = VIEW_REF_W / minFitZoom;
+    fitH = fitW / ar;
   }
   const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
   viewBoxX.value = cx - fitW / 2; viewBoxY.value = cy - fitH / 2;
-  viewBoxW.value = fitW; viewBoxH.value = fitH; zoomScale.value = 1200 / fitW;
+  viewBoxW.value = fitW; viewBoxH.value = fitH; zoomScale.value = VIEW_REF_W / fitW;
 };
 
 // ── Data mapping ──
@@ -1291,12 +1329,14 @@ const lineLabels = computed(() => {
     const nameKey = line.name.toUpperCase();
     const configForLine = lineSettings[nameKey] || {};
 
-    // Center of the U span
+    // HEAD/CRANK stay centered along their U span. BLOCK sits on the first
+    // machine row of that line so the heading is not pushed past the last cell.
+    const uAlongLine = nameKey === 'BLOCK' ? 0 : (rows * spacing) / 2;
     let uCenter = currentU
-      + (rows * spacing) / 2
+      + uAlongLine
       + (CONFIG.lineLabelGridUOffset || 0);
-    // Place right above the boundary line (v = 0)
-    let vCenter = -0.22;
+    // One grid cell in front of the first machine column (same as TNGA).
+    let vCenter = -0.22 - 1;
 
     // Apply manual overrides
     const uOffset = configForLine.uOffset !== undefined ? configForLine.uOffset : 0.0;
@@ -1489,8 +1529,17 @@ function getAbnormalParameters(machine) {
 }
 
 // ── Modal computed ──
+const isSelectedMachineDisconnected = computed(() => {
+  const machine = selectedMachine.value;
+  if (!machine) return false;
+  if (machine.machine_state === 'DISCONNECTED') return true;
+  const params = machine.parameters || [];
+  return params.length > 0 && params.every((param) => param.parameter_state === 'DISCONNECTED');
+});
+
 const selectedMachineAlerts = computed(() => {
   if (!selectedMachine.value) return [];
+  if (isSelectedMachineDisconnected.value) return [];
   if (selectedMachine.value.is_combined_air_honing) {
     return selectedMachine.value.parameters || [];
   }
@@ -1498,6 +1547,11 @@ const selectedMachineAlerts = computed(() => {
 });
 
 function showMachineDetails(machine) {
+  if (machine.machine_state === 'DISCONNECTED') {
+    selectedMachine.value = machine;
+    return;
+  }
+
   if (machine.is_combined_air_honing) {
     selectedMachine.value = machine;
     return;
@@ -1614,7 +1668,7 @@ function getParameterGroup(machineName, parameterName) {
 // ── Lifecycle ──
 const refreshFactoryData = async ({ fitAfterLoad = false } = {}) => {
   const updated = await factoryStore.fetchAndFormatData();
-  if (updated && fitAfterLoad) {
+  if (updated && (fitAfterLoad || !userAdjustedView.value)) {
     await nextTick();
     fitView();
   }
@@ -1642,6 +1696,12 @@ onMounted(async () => {
   // Immediately render cached data (or skeleton on the first visit).
   await nextTick();
   fitView();
+  if (svgRef.value && typeof ResizeObserver !== 'undefined') {
+    svgResizeObserver = new ResizeObserver(() => {
+      if (!userAdjustedView.value) fitView();
+    });
+    svgResizeObserver.observe(svgRef.value);
+  }
 
   DatabaseName.fetchSchemaName().catch(() => {
     console.warn('Schema name unavailable for plant toggle.');
@@ -1670,6 +1730,10 @@ onMounted(async () => {
 });
 
 onBeforeUnmount(() => {
+  if (svgResizeObserver) {
+    svgResizeObserver.disconnect();
+    svgResizeObserver = null;
+  }
   if (factoryRefreshTimer !== null) {
     window.clearInterval(factoryRefreshTimer);
     factoryRefreshTimer = null;
@@ -1690,9 +1754,11 @@ onBeforeUnmount(() => {
 /* Dynamic theme background for the window behind the cards */
 .mo-bg-dark {
   background: #080d16 !important;
+  color-scheme: dark;
 }
 .mo-bg-light {
   background: #e2e8f0 !important;
+  color-scheme: light;
 }
 
 @keyframes pulse-shimmer {
@@ -1704,10 +1770,54 @@ onBeforeUnmount(() => {
 }
 
 /* Scrollbar styling */
-::-webkit-scrollbar { width: 4px; }
-::-webkit-scrollbar-track { background: #0d1117; }
-::-webkit-scrollbar-thumb { background: #2d3748; border-radius: 2px; }
-::-webkit-scrollbar-thumb:hover { background: #4a5568; }
+.noc-feed,
+.noc-filters,
+.noc-line-alerts-list,
+.noc-modal-body {
+  scrollbar-width: thin;
+}
+.noc-dark,
+.noc-dark .noc-feed,
+.noc-dark .noc-filters,
+.noc-dark .noc-line-alerts-list,
+.noc-dark-modal .noc-modal-body {
+  color-scheme: dark;
+  scrollbar-color: #475569 #0d1117;
+}
+.noc-dark .noc-feed::-webkit-scrollbar,
+.noc-dark .noc-filters::-webkit-scrollbar,
+.noc-dark .noc-line-alerts-list::-webkit-scrollbar,
+.noc-dark-modal .noc-modal-body::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.noc-dark .noc-feed::-webkit-scrollbar-track,
+.noc-dark .noc-filters::-webkit-scrollbar-track,
+.noc-dark .noc-line-alerts-list::-webkit-scrollbar-track,
+.noc-dark-modal .noc-modal-body::-webkit-scrollbar-track {
+  background: #0d1117;
+}
+.noc-dark .noc-feed::-webkit-scrollbar-thumb,
+.noc-dark .noc-filters::-webkit-scrollbar-thumb,
+.noc-dark .noc-line-alerts-list::-webkit-scrollbar-thumb,
+.noc-dark-modal .noc-modal-body::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 8px;
+  border: 2px solid #0d1117;
+}
+.noc-dark .noc-feed::-webkit-scrollbar-thumb:hover,
+.noc-dark .noc-filters::-webkit-scrollbar-thumb:hover,
+.noc-dark .noc-line-alerts-list::-webkit-scrollbar-thumb:hover,
+.noc-dark-modal .noc-modal-body::-webkit-scrollbar-thumb:hover {
+  background: #64748b;
+}
+.noc-light .noc-feed,
+.noc-light .noc-filters,
+.noc-light .noc-line-alerts-list,
+.noc-light-modal .noc-modal-body {
+  color-scheme: light;
+  scrollbar-color: #cbd5e1 #f8fafc;
+}
 
 /* ═══════════════════════════════════════════════
    NOC PANEL — CORE LAYOUT
@@ -1765,7 +1875,7 @@ onBeforeUnmount(() => {
 /* ── Metric Tiles ── */
 .noc-metrics-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
 }
 
 .noc-metric-tile {
@@ -1785,6 +1895,7 @@ onBeforeUnmount(() => {
 .noc-metric-ok::before     { background: #22c55e; }
 .noc-metric-warn::before   { background: #f59e0b; }
 .noc-metric-crit::before   { background: #ef4444; }
+.noc-metric-disc::before   { background: #64748b; }
 
 .noc-metric-value {
   font-size: 26px;
@@ -1797,6 +1908,7 @@ onBeforeUnmount(() => {
 .noc-ok   { color: #4ade80 !important; }
 .noc-warn { color: #fbbf24 !important; }
 .noc-crit { color: #f87171 !important; }
+.noc-disc { color: #94a3b8 !important; }
 
 .noc-metric-label {
   font-size: 10px;
@@ -1808,6 +1920,7 @@ onBeforeUnmount(() => {
 .noc-ok-label   { color: #16a34a; }
 .noc-warn-label { color: #b45309; }
 .noc-crit-label { color: #b91c1c; }
+.noc-disc-label { color: #64748b; letter-spacing: 0.06em; }
 
 /* ── Status Proportion Bar ── */
 .noc-status-bar {
@@ -1838,49 +1951,68 @@ onBeforeUnmount(() => {
   border-bottom: 1px solid #334155;
   flex-shrink: 0;
 }
-.noc-alert-tabs {
+.noc-alert-line {
   display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
   background: #0a0f16;
   border-bottom: 1px solid #334155;
 }
-.noc-alert-tab {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 8px 10px 7px;
-  font-size: 11px;
+.noc-alert-heading {
+  flex: 0 0 auto;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
-  color: #64748b;
-  background: transparent;
-  border: 0;
-  border-bottom: 2px solid transparent;
+  color: #94a3b8;
+  white-space: nowrap;
+  padding-right: 4px;
+}
+.noc-alert-line-item {
+  flex: 1;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-width: 0;
+  padding: 6px 10px;
+  border: 1px solid #334155;
+  border-radius: 6px;
+  background: #0d1117;
   cursor: pointer;
+  color: #64748b;
+  box-shadow: none;
 }
-.noc-alert-tab:hover {
-  color: #94a3b8;
+.noc-alert-line-item.active {
+  border-color: #38bdf8;
+  background: rgba(56, 189, 248, 0.16);
+  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.35);
 }
-.noc-alert-tab.active {
-  color: #e2e8f0;
-  border-bottom-color: #38bdf8;
-  background: rgba(56, 189, 248, 0.08);
-}
-.noc-alert-tab .noc-alert-count {
-  margin-left: 0;
-}
-.noc-alert-count {
-  margin-left: auto;
-  background: #1e2d3d;
-  color: #94a3b8;
+.noc-alert-line-label {
   font-size: 11px;
-  font-weight: 800;
-  padding: 2px 7px;
-  border-radius: 20px;
-  letter-spacing: 0.05em;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  white-space: nowrap;
 }
+.noc-alert-line-item.active .noc-alert-line-label {
+  color: #f8fafc;
+}
+.noc-alert-line-count {
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  min-width: 2.5ch;
+  text-align: right;
+  line-height: 1;
+}
+.noc-alert-line-count.is-active { color: #f87171; }
+.noc-alert-line-count.is-pending { color: #fbbf24; }
+.noc-alert-line-item.active .noc-alert-line-count.is-active { color: #fca5a5; }
+.noc-alert-line-item.active .noc-alert-line-count.is-pending { color: #fcd34d; }
 
 /* ── Feed ── */
 .noc-feed {
@@ -2306,12 +2438,20 @@ onBeforeUnmount(() => {
 .noc-light .noc-ok-label     { color: #16a34a; }
 .noc-light .noc-warn-label   { color: #b45309; }
 .noc-light .noc-crit-label   { color: #b91c1c; }
+.noc-light .noc-disc-label   { color: #64748b; }
 .noc-light .noc-section-label { background: #f1f5f9; border-bottom-color: #e2e8f0; color: #94a3b8; }
-.noc-light .noc-alert-tabs { background: #f1f5f9; border-bottom-color: #e2e8f0; }
-.noc-light .noc-alert-tab { color: #64748b; }
-.noc-light .noc-alert-tab:hover { color: #334155; }
-.noc-light .noc-alert-tab.active { color: #0f172a; border-bottom-color: #0284c7; background: rgba(2, 132, 199, 0.08); }
-.noc-light .noc-alert-count  { background: #e2e8f0; color: #64748b; }
+.noc-light .noc-alert-line { background: #f8fafc; border-bottom-color: #e2e8f0; }
+.noc-light .noc-alert-heading { color: #64748b; }
+.noc-light .noc-alert-line-item { background: #ffffff; border-color: #e2e8f0; color: #64748b; }
+.noc-light .noc-alert-line-item.active {
+  background: rgba(2, 132, 199, 0.12);
+  border-color: #0284c7;
+  box-shadow: inset 0 0 0 1px rgba(2, 132, 199, 0.25);
+}
+.noc-light .noc-alert-line-label { color: #64748b; }
+.noc-light .noc-alert-line-item.active .noc-alert-line-label { color: #0f172a; }
+.noc-light .noc-alert-line-count.is-active { color: #dc2626; }
+.noc-light .noc-alert-line-count.is-pending { color: #d97706; }
 .noc-light .noc-feed         { background: #f8fafc; }
 .noc-light .noc-line-group   { border-bottom-color: #e2e8f0; }
 .noc-light .noc-line-header  { background: #f1f5f9; border-bottom-color: #e2e8f0; }
@@ -2606,6 +2746,10 @@ onBeforeUnmount(() => {
   border-color: rgba(16, 185, 129, 0.2);
   background: rgba(16, 185, 129, 0.03);
 }
+.noc-dark-modal .noc-nominal-icon-container.noc-disconnected-icon {
+  border-color: rgba(148, 163, 184, 0.35);
+  background: rgba(148, 163, 184, 0.06);
+}
 
 
 /* ================= LIGHT MODE SPECIFIC STYLES ================= */
@@ -2794,6 +2938,10 @@ onBeforeUnmount(() => {
 .noc-light-modal .noc-nominal-icon-container {
   border-color: rgba(16, 185, 129, 0.25);
   background: rgba(16, 185, 129, 0.04);
+}
+.noc-light-modal .noc-nominal-icon-container.noc-disconnected-icon {
+  border-color: rgba(100, 116, 139, 0.3);
+  background: rgba(100, 116, 139, 0.06);
 }
 
 /* ==========================================================================
