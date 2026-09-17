@@ -7869,7 +7869,7 @@ def main():
 def _list_cycle_time_machines():
     rows = _execute_raw_sql(
         f"""
-        SELECT id, name, location
+        SELECT id, machine_name, line
         FROM {schema_name}.cycle_time_machines
         """
     )
@@ -7879,9 +7879,9 @@ def _list_cycle_time_machines():
 def _get_cycle_time_machine_by_name(machine_name: str):
     rows = _execute_raw_sql(
         f"""
-        SELECT id, name, location
+        SELECT id, machine_name, line
         FROM {schema_name}.cycle_time_machines
-        WHERE name = %s
+        WHERE machine_name = %s
         LIMIT 1
         """,
         (machine_name,)
