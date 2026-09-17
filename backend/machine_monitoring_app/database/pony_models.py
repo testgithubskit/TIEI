@@ -74,10 +74,12 @@ class Machine(PONY_DATABASE.Entity):
     machine_event_timelines = Set('MachineEventTimeline')
     machine_production_timelines = Set('MachineProductionTimeline')
     spare_parts = Set('SparePart')
+    spare_part_activities = Set('SparePartActivity')
+    spare_part_activity_histories = Set('SparePartActivityHistory')
     machine_part_count = Optional('MachinePartCount')
     machine_comparisons = Set('ParameterComparison')
-    cycle_times = Set('CycleTime')
-    cycle_time_limits = Optional('CycleTimeLimits')
+    disconnection_histories = Set('DisconnectionHistory')
+    disconnection_history_intervals = Set('DisconnectionHistoryInterval')
 
 
 class SparePart(PONY_DATABASE.Entity):
@@ -93,6 +95,8 @@ class SparePart(PONY_DATABASE.Entity):
 
     # Relationships - One Side Of Relationship
     machine = Required(Machine, column="machine_id")
+    activities = Set('SparePartActivity')
+    activity_histories = Set('SparePartActivityHistory')
 
 
 class ParameterGroup(PONY_DATABASE.Entity):
@@ -269,6 +273,8 @@ class User(PONY_DATABASE.Entity):
     corrective_activities = Set('CorrectiveActivity')
     activities_history = Set('ActivityHistory')
     user_access_log = Set('UserAccessLog')
+    spare_part_activities = Set('SparePartActivity')
+    spare_part_activity_histories = Set('SparePartActivityHistory')
 
 
 class EmailUser(PONY_DATABASE.Entity):
@@ -413,15 +419,32 @@ class UserAccessLog(PONY_DATABASE.Entity):
     timestamp = Required(datetime)
 
 
+class CycleTimeMachine(PONY_DATABASE.Entity):
+    """Master list of cycle-time machines (not the MT-Linki machines table)."""
+
+    _table_ = (schema_name, "cycle_time_machines")
+
+    id = PrimaryKey(int)
+    machine_name = Optional(str)
+    line = Optional(str)
+
+    cycle_times = Set('CycleTime')
+    cycle_time_limits = Optional('CycleTimeLimits')
+
+
 class CycleTime(PONY_DATABASE.Entity):
     """Represents the cycle time data for machines"""
 
     _table_ = (schema_name, "sql_server_mct_data")
 
     time = Required(datetime)
-    cycle_time = Required(float)
+    cycle_time = Optional(float)
+    machine_number = Optional(str)
+    model = Optional(int)
+    counter = Optional(int)
+    created_at = Optional(datetime)
 
-    machine = Required(Machine, column="machine_id")
+    machine = Required(CycleTimeMachine, column="machine_id")
 
     PrimaryKey(time, machine)
 
@@ -432,10 +455,161 @@ class CycleTimeLimits(PONY_DATABASE.Entity):
     _table_ = (schema_name, "cycle_time_limits")
 
     id = PrimaryKey(int, auto=True)
-    machine = Required(Machine, column="machine_id")
+    machine = Required(CycleTimeMachine, column="machine_id")
     warning_limit = Required(float)
     critical_limit = Required(float)
-    status = Optional(str)  # DISCONNECTED, NOT_DISCONNECTED, ACTIVE - already exists in DB
+    status = Optional(str)
+
+
+class PressureMonitoringMachine(PONY_DATABASE.Entity):
+    """Air-pressure machines and RMSE limits."""
+
+    _table_ = (schema_name, "pressure_monitoring_machine")
+
+    id = PrimaryKey(int, auto=True)
+    machine_name = Required(str)
+    warning_limit = Optional(float)
+    critical_limit = Optional(float)
+    status = Optional(str)
+
+    log_files = Set('PressureLogFile')
+    sensor_data = Set('PressureSensorData')
+
+
+class PressureLogFile(PONY_DATABASE.Entity):
+    """One processed pressure log file / run."""
+
+    _table_ = (schema_name, "pressure_log_file")
+
+    id = PrimaryKey(int, auto=True)
+    file_name = Required(str)
+    processed_time = Optional(datetime)
+    baseline = Required(bool, default=False)
+    time_stamp = Optional(datetime)
+    mean_pressure = Optional(float)
+    peak_pressure = Optional(float)
+    start_time = Optional(datetime)
+    end_time = Optional(datetime)
+    cycle_duration_seconds = Optional(float)
+    pressure_ripple = Optional(float)
+    rmse = Optional(float)
+    status = Optional(str)
+
+    machine = Required(PressureMonitoringMachine, column="machine_id")
+    sensor_data = Set('PressureSensorData')
+
+
+class PressureSensorData(PONY_DATABASE.Entity):
+    """Raw pressure samples. Table has no unique key; identity is approximate."""
+
+    _table_ = (schema_name, "pressure_sensor_data")
+
+    reading_time = Required(datetime, column="timestamp")
+    pressure_value = Optional(float)
+    created_at = Optional(datetime)
+    machine = Required(PressureMonitoringMachine, column="machine_id")
+    log_file = Required(PressureLogFile, column="log_file_id")
+
+    PrimaryKey(reading_time, machine, log_file)
+
+
+class SparePartActivity(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "spare_part_activity")
+
+    id = PrimaryKey(int, auto=True)
+    spare_part_name = Required(str)
+    date_of_identification = Required(datetime)
+    priority = Required(str)
+    target_date_of_completion = Optional(date)
+    corrective_measurement = Required(str)
+    spare_required = Required(str)
+    support_needed = Required(str)
+
+    machine = Required(Machine, column="machine_id")
+    spare_part = Required(SparePart, column="spare_part_id")
+    responsible_person = Optional(User, column="responsible_person_id")
+
+
+class SparePartActivityHistory(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "spare_part_activity_history")
+
+    id = PrimaryKey(int, auto=True)
+    spare_part_name = Required(str)
+    date_of_identification = Required(datetime)
+    priority = Required(str)
+    target_date_of_completion = Optional(date)
+    corrective_measurement = Required(str)
+    spare_required = Required(str)
+    support_needed = Required(str)
+    date_of_completion = Optional(date)
+
+    machine = Required(Machine, column="machine_id")
+    spare_part = Required(SparePart, column="spare_part_id")
+    responsible_person = Optional(User, column="responsible_person_id")
+
+
+class DisconnectionHistory(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "disconnection_history")
+
+    status = Required(str)
+    time = Required(datetime)
+    machine = Required(Machine, column="machine_id")
+
+    PrimaryKey(machine, time)
+
+
+class DisconnectionHistoryInterval(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "disconnection_history1")
+
+    status = Required(str)
+    start_time = Required(datetime)
+    stop_time = Optional(datetime)
+    machine = Required(Machine, column="machine_id")
+
+    PrimaryKey(machine, start_time)
+
+
+class VibrationMachine(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "vibration_machines")
+
+    id = PrimaryKey(int, auto=True)
+    machine_name = Required(str)
+    location = Optional(str)
+    port1 = Optional(str)
+    port2 = Optional(str)
+    warning = Optional(float)
+    critical = Optional(float)
+
+    logs = Set('VibrationMachineLog')
+    readings = Set('VibrationData')
+
+
+class VibrationMachineLog(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "vibration_machine_logs")
+
+    id = PrimaryKey(int, auto=True)
+    program_file_id = Optional(int)
+    program_file_time = Optional(datetime)
+    machine = Optional(VibrationMachine, column="machine_id")
+
+
+class VibrationData(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "vibration_data")
+
+    id = PrimaryKey(int, auto=True, size=64)
+    timestamp = Required(datetime)
+    program_file_id = Optional(int)
+    port = Required(str)
+    origin = Optional(str)
+    created_at = Optional(datetime)
+    contact_temperature = Optional(float)
+    v_peak_x = Optional(float)
+    v_peak_y = Optional(float)
+    v_peak_z = Optional(float)
+    v_rms_x = Optional(float)
+    v_rms_y = Optional(float)
+    v_rms_z = Optional(float)
+    machine = Optional(VibrationMachine, column="machine_id")
 
 
 def generate_pony_mapping(create_tables=True):

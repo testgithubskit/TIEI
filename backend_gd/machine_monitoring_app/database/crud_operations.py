@@ -45,7 +45,7 @@ from machine_monitoring_app.database.orm import update_operation
 from machine_monitoring_app.database.pony_models import Machine, ParameterGroup, MachineParameter, \
     RealTimeParameter, User as UserPony, SparePart, EmailUser, MachinePartCount, User, RealTimeParameterActive, \
     MachineProductionTimeline, MachinePartCount, CorrectiveActivity, ActivityHistory, ParameterCondition, UpdateLog, \
-    UserAccessLog, CycleTime, CycleTimeLimits, Unit, schema_name
+    UserAccessLog, CycleTime, CycleTimeLimits, PressureMonitoringMachine, PressureLogFile, Unit, schema_name
 
 from machine_monitoring_app.exception_handling.custom_exceptions import NoParameterGroupError, \
     GetParamGroupDBError, GetAllParameterDBError, GetMachineTimelineError
@@ -574,105 +574,47 @@ def _recalculate_rmse_for_machine(
 def _refresh_pressure_log_file_statuses(machine_id, warning_limit, critical_limit, cursor=None):
     """Recompute pressure_log_file.status from stored rmse vs limits (no RMSE recalc)."""
     mid = int(machine_id)
-    rows = _execute_raw_sql(
-        f"""
-        SELECT id, rmse, COALESCE(baseline, FALSE)
-        FROM {schema_name}.pressure_log_file
-        WHERE machine_id = {mid}
-        """
-    )
-    update_ids = []
-    update_statuses = []
-    for row in rows or []:
-        log_id = int(row[0])
-        rmse = float(row[1]) if row[1] is not None else None
-        is_baseline = bool(row[2])
-        status = None if is_baseline else _get_pressure_rmse_status(rmse, warning_limit, critical_limit)
-        update_ids.append(log_id)
-        update_statuses.append(status)
+    log_files = list(select(lf for lf in PressureLogFile if lf.machine.id == mid))
+    for log_file in log_files:
+        if log_file.baseline:
+            log_file.status = None
+        else:
+            log_file.status = _get_pressure_rmse_status(
+                log_file.rmse, warning_limit, critical_limit
+            )
+    commit()
+    return len(log_files)
 
-    if not update_ids:
-        return 0
 
-    own_connection = cursor is None
-    if own_connection:
-        connection = PONY_DATABASE.get_connection()
-        cursor = connection.cursor()
-    else:
-        connection = None
-    try:
-        cursor.execute(
-            f"""
-            UPDATE {schema_name}.pressure_log_file AS plf
-            SET status = data.status
-            FROM (
-                SELECT
-                    t.id,
-                    NULLIF(t.status_text, '') AS status
-                FROM UNNEST(%s::bigint[], %s::text[]) AS t(id, status_text)
-            ) AS data
-            WHERE plf.id = data.id
-              AND plf.machine_id = %s
-            """,
-            [update_ids, update_statuses, mid],
-        )
-        if own_connection:
-            connection.commit()
-    finally:
-        if own_connection and cursor is not None:
-            cursor.close()
-    return len(update_ids)
+def _latest_pressure_log_file(machine_id):
+    return select(
+        lf for lf in PressureLogFile if lf.machine.id == int(machine_id)
+    ).order_by(desc(PressureLogFile.time_stamp), desc(PressureLogFile.id)).first()
 
 
 def _refresh_pressure_machine_status(machine_id, warning_limit, critical_limit, cursor=None):
     """Persist machine status from the latest log file's stored status / RMSE vs limits."""
     mid = int(machine_id)
-    latest = _execute_raw_sql(
-        f"""
-        SELECT rmse, status, COALESCE(baseline, FALSE)
-        FROM {schema_name}.pressure_log_file
-        WHERE machine_id = {mid}
-        ORDER BY time_stamp DESC NULLS LAST, id DESC
-        LIMIT 1
-        """
-    )
-    rmse = float(latest[0][0]) if latest and latest[0][0] is not None else None
-    stored_status = latest[0][1] if latest else None
-    is_baseline = bool(latest[0][2]) if latest else False
+    machine = PressureMonitoringMachine.get(id=mid)
+    if not machine:
+        return _get_pressure_rmse_status(None, warning_limit, critical_limit), None
+
+    latest = _latest_pressure_log_file(mid)
+    rmse = float(latest.rmse) if latest and latest.rmse is not None else None
+    stored_status = latest.status if latest else None
+    is_baseline = bool(latest.baseline) if latest else False
     if stored_status and not is_baseline:
         status = stored_status
     else:
         status = _get_pressure_rmse_status(rmse, warning_limit, critical_limit)
 
-    own_connection = cursor is None
-    if own_connection:
-        connection = PONY_DATABASE.get_connection()
-        cursor = connection.cursor()
-    else:
-        connection = None
-    try:
-        _ensure_pressure_runtime_columns(cursor)
-        cursor.execute(
-            f"""
-            UPDATE {schema_name}.pressure_monitoring_machine
-            SET status = %s
-            WHERE id = %s
-            """,
-            [status, mid],
-        )
-        if own_connection:
-            connection.commit()
-    finally:
-        if own_connection and cursor is not None:
-            cursor.close()
+    machine.status = status
+    commit()
     return status, rmse
 
 
 def _fetch_pressure_machine_rows():
-    """Pressure signal machines with RMSE-based status from DB.
-
-    Ensures pressure-only runtime columns exist before SELECT (does not touch other tables).
-    """
+    """Pressure signal machines with RMSE-based status from DB."""
     connection = PONY_DATABASE.get_connection()
     cursor = connection.cursor()
     try:
@@ -681,25 +623,20 @@ def _fetch_pressure_machine_rows():
     finally:
         cursor.close()
 
-    query = f"""
-        SELECT pmm.id,
-               pmm.machine_name,
-               pmm.warning_limit,
-               pmm.critical_limit,
-               COALESCE(NULLIF(pmm.status, ''), latest_log.status) AS status,
-               latest_log.rmse,
-               latest_log.time_stamp
-        FROM {schema_name}.pressure_monitoring_machine pmm
-        LEFT JOIN LATERAL (
-            SELECT rmse, status, time_stamp
-            FROM {schema_name}.pressure_log_file plf
-            WHERE plf.machine_id = pmm.id
-            ORDER BY plf.time_stamp DESC NULLS LAST, plf.id DESC
-            LIMIT 1
-        ) latest_log ON TRUE
-        ORDER BY pmm.id
-    """
-    return _execute_raw_sql(query)
+    rows = []
+    for machine in select(m for m in PressureMonitoringMachine).order_by(PressureMonitoringMachine.id):
+        latest = _latest_pressure_log_file(machine.id)
+        status = machine.status if machine.status else (latest.status if latest else None)
+        rows.append((
+            machine.id,
+            machine.machine_name,
+            machine.warning_limit,
+            machine.critical_limit,
+            status,
+            latest.rmse if latest else None,
+            latest.time_stamp if latest else None,
+        ))
+    return rows
 
 
 def _build_pressure_machine_json(machine_id, machine_name, warning_limit, critical_limit,
@@ -872,18 +809,7 @@ def get_pressure_machine_timeline(machine_name, start_time, end_time, max_points
         )
 
     max_points = _clamp_pressure_max_points(max_points)
-    machine_name_escaped = _escape_sql_literal(machine_name)
-    machine_query = f"""
-        SELECT id, machine_name, warning_limit, critical_limit
-        FROM {schema_name}.pressure_monitoring_machine
-        WHERE machine_name = '{machine_name_escaped}'
-        LIMIT 1
-    """
-    machine_rows = _execute_raw_sql(machine_query)
-    if not machine_rows:
-        raise ValueError(f"Pressure monitoring machine '{machine_name}' not found")
-
-    machine_id, machine_name_db, warning_limit, critical_limit = machine_rows[0]
+    machine_id, machine_name_db, warning_limit, critical_limit = _get_pressure_machine_meta(machine_name)
     start_dt, end_dt = _pressure_sql_time_bounds(start_time, end_time)
     start_ts = _format_pressure_sql_timestamp(start_dt)
     end_ts = _format_pressure_sql_timestamp(end_dt)
@@ -958,44 +884,39 @@ def parse_pressure_date_param(value, field_name):
 
 
 def _get_pressure_machine_meta(machine_name):
-    machine_name_escaped = _escape_sql_literal(machine_name)
-    machine_query = f"""
-        SELECT id, machine_name, warning_limit, critical_limit
-        FROM {schema_name}.pressure_monitoring_machine
-        WHERE machine_name = '{machine_name_escaped}'
-        LIMIT 1
-    """
-    machine_rows = _execute_raw_sql(machine_query)
-    if not machine_rows:
+    machine = PressureMonitoringMachine.get(machine_name=machine_name)
+    if not machine:
         raise ValueError(f"Pressure monitoring machine '{machine_name}' not found")
-    return machine_rows[0]
+    return machine.id, machine.machine_name, machine.warning_limit, machine.critical_limit
 
 
 def _fetch_pressure_log_files(machine_id, start_date=None, end_date=None):
-    filters = [f"machine_id = {int(machine_id)}"]
+    query = select(lf for lf in PressureLogFile if lf.machine.id == int(machine_id))
     if start_date is not None:
-        filters.append(f"time_stamp >= DATE '{start_date.isoformat()}'")
+        start_dt = datetime.combine(start_date, datetime.min.time())
+        query = query.filter(lambda lf: lf.time_stamp >= start_dt)
     if end_date is not None:
-        filters.append(f"time_stamp < DATE '{(end_date + timedelta(days=1)).isoformat()}'")
+        end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        query = query.filter(lambda lf: lf.time_stamp < end_dt)
 
-    query = f"""
-        SELECT id,
-               file_name,
-               time_stamp,
-               COALESCE(baseline, FALSE) AS baseline,
-               mean_pressure,
-               peak_pressure,
-               start_time,
-               end_time,
-               cycle_duration_seconds,
-               pressure_ripple,
-               rmse,
-               status
-        FROM {schema_name}.pressure_log_file
-        WHERE {' AND '.join(filters)}
-        ORDER BY time_stamp DESC, id DESC
-    """
-    return _execute_raw_sql(query)
+    query = query.order_by(desc(PressureLogFile.time_stamp), desc(PressureLogFile.id))
+    return [
+        (
+            log_file.id,
+            log_file.file_name,
+            log_file.time_stamp,
+            bool(log_file.baseline),
+            log_file.mean_pressure,
+            log_file.peak_pressure,
+            log_file.start_time,
+            log_file.end_time,
+            log_file.cycle_duration_seconds,
+            log_file.pressure_ripple,
+            log_file.rmse,
+            log_file.status,
+        )
+        for log_file in query
+    ]
 
 
 def _fetch_pressure_points_for_log_file(machine_id, log_file_id, max_points):
@@ -1152,35 +1073,16 @@ def get_pressure_log_file_listing(machine_name, start_date=None, end_date=None):
 @db_session(optimistic=False)
 def update_pressure_log_file_baseline(machine_name, log_file_id):
     machine_id, machine_name_db, warning_limit, critical_limit = _get_pressure_machine_meta(machine_name)
-    existing = _execute_raw_sql(
-        f"""
-        SELECT id
-        FROM {schema_name}.pressure_log_file
-        WHERE id = {int(log_file_id)}
-          AND machine_id = {int(machine_id)}
-        LIMIT 1
-        """
-    )
-    if not existing:
+    target = PressureLogFile.get(lambda lf: lf.id == int(log_file_id) and lf.machine.id == int(machine_id))
+    if not target:
         raise ValueError(
             f"Pressure log file '{log_file_id}' not found for machine '{machine_name_db}'"
         )
 
-    connection = PONY_DATABASE.get_connection()
-    cursor = connection.cursor()
-    try:
-        _ensure_pressure_runtime_columns(cursor)
-        cursor.execute(
-            f"UPDATE {schema_name}.pressure_log_file SET baseline = FALSE WHERE machine_id = %s",
-            [machine_id],
-        )
-        cursor.execute(
-            f"UPDATE {schema_name}.pressure_log_file SET baseline = TRUE WHERE id = %s AND machine_id = %s",
-            [log_file_id, machine_id],
-        )
-        connection.commit()
-    finally:
-        cursor.close()
+    for log_file in select(lf for lf in PressureLogFile if lf.machine.id == int(machine_id)):
+        log_file.baseline = False
+    target.baseline = True
+    commit()
 
     # Recalculate RMSE + per-file status for all runs against the new baseline.
     rmse_stats = _recalculate_rmse_for_machine(
@@ -1207,16 +1109,11 @@ def update_pressure_log_file_baseline(machine_name, log_file_id):
 def clear_pressure_log_file_baseline(machine_name):
     machine_id, machine_name_db, warning_limit, critical_limit = _get_pressure_machine_meta(machine_name)
 
-    connection = PONY_DATABASE.get_connection()
-    cursor = connection.cursor()
-    try:
-        cursor.execute(
-            f"UPDATE {schema_name}.pressure_log_file SET baseline = FALSE, rmse = NULL, status = NULL WHERE machine_id = %s",
-            [machine_id],
-        )
-        connection.commit()
-    finally:
-        cursor.close()
+    for log_file in select(lf for lf in PressureLogFile if lf.machine.id == int(machine_id)):
+        log_file.baseline = False
+        log_file.rmse = None
+        log_file.status = None
+    commit()
 
     machine_status, latest_rmse = _refresh_pressure_machine_status(
         machine_id, warning_limit, critical_limit
@@ -1245,20 +1142,10 @@ def update_pressure_machine_limits(machine_name, warning_limit=None, critical_li
     if float(new_warning) > float(new_critical):
         raise ValueError("warning_limit cannot be greater than critical_limit")
 
-    connection = PONY_DATABASE.get_connection()
-    cursor = connection.cursor()
-    try:
-        cursor.execute(
-            f"""
-            UPDATE {schema_name}.pressure_monitoring_machine
-            SET warning_limit = %s, critical_limit = %s
-            WHERE id = %s
-            """,
-            [new_warning, new_critical, machine_id],
-        )
-        connection.commit()
-    finally:
-        cursor.close()
+    machine = PressureMonitoringMachine.get(id=machine_id)
+    machine.warning_limit = new_warning
+    machine.critical_limit = new_critical
+    commit()
 
     _refresh_pressure_log_file_statuses(machine_id, new_warning, new_critical)
     machine_status, latest_rmse = _refresh_pressure_machine_status(

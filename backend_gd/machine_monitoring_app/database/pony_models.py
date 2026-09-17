@@ -74,6 +74,8 @@ class Machine(PONY_DATABASE.Entity):
     machine_event_timelines = Set('MachineEventTimeline')
     machine_production_timelines = Set('MachineProductionTimeline')
     spare_parts = Set('SparePart')
+    spare_part_activities = Set('SparePartActivity')
+    spare_part_activity_histories = Set('SparePartActivityHistory')
     machine_part_count = Optional('MachinePartCount')
     machine_comparisons = Set('ParameterComparison')
     cycle_times = Set('CycleTime')
@@ -93,6 +95,8 @@ class SparePart(PONY_DATABASE.Entity):
 
     # Relationships - One Side Of Relationship
     machine = Required(Machine, column="machine_id")
+    activities = Set('SparePartActivity')
+    activity_histories = Set('SparePartActivityHistory')
 
 
 class ParameterGroup(PONY_DATABASE.Entity):
@@ -269,6 +273,8 @@ class User(PONY_DATABASE.Entity):
     corrective_activities = Set('CorrectiveActivity')
     activities_history = Set('ActivityHistory')
     user_access_log = Set('UserAccessLog')
+    spare_part_activities = Set('SparePartActivity')
+    spare_part_activity_histories = Set('SparePartActivityHistory')
 
 
 class EmailUser(PONY_DATABASE.Entity):
@@ -419,7 +425,11 @@ class CycleTime(PONY_DATABASE.Entity):
     _table_ = (schema_name, "sql_server_mct_data")
 
     time = Required(datetime)
-    cycle_time = Required(float)
+    cycle_time = Optional(float)
+    machine_number = Optional(str)
+    model = Optional(int)
+    counter = Optional(int)
+    created_at = Optional(datetime)
 
     machine = Required(Machine, column="machine_id")
 
@@ -432,10 +442,81 @@ class CycleTimeLimits(PONY_DATABASE.Entity):
     _table_ = (schema_name, "cycle_time_limits")
 
     id = PrimaryKey(int, auto=True)
+    machine = Optional(Machine, column="machine_id")
+    warning_limit = Optional(float)
+    critical_limit = Optional(float)
+    status = Optional(str)
+
+
+class PressureMonitoringMachine(PONY_DATABASE.Entity):
+    """Air-pressure machines and RMSE limits."""
+
+    _table_ = (schema_name, "pressure_monitoring_machine")
+
+    id = PrimaryKey(int, auto=True)
+    machine_name = Optional(str)
+    warning_limit = Optional(float)
+    critical_limit = Optional(float)
+    status = Optional(str)
+
+    log_files = Set('PressureLogFile')
+
+
+class PressureLogFile(PONY_DATABASE.Entity):
+    """One processed pressure log file / run."""
+
+    _table_ = (schema_name, "pressure_log_file")
+
+    id = PrimaryKey(int, auto=True)
+    file_name = Optional(str)
+    processed_time = Optional(datetime)
+    baseline = Optional(bool, default=False)
+    time_stamp = Optional(datetime)
+    mean_pressure = Optional(float)
+    peak_pressure = Optional(float)
+    start_time = Optional(datetime)
+    end_time = Optional(datetime)
+    cycle_duration_seconds = Optional(float)
+    pressure_ripple = Optional(float)
+    rmse = Optional(float)
+    status = Optional(str)
+
+    machine = Optional(PressureMonitoringMachine, column="machine_id")
+
+
+class SparePartActivity(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "spare_part_activity")
+
+    id = PrimaryKey(int, auto=True)
+    spare_part_name = Required(str)
+    date_of_identification = Required(datetime)
+    priority = Required(str)
+    target_date_of_completion = Optional(date)
+    corrective_measurement = Required(str)
+    spare_required = Required(str)
+    support_needed = Required(str)
+
     machine = Required(Machine, column="machine_id")
-    warning_limit = Required(float)
-    critical_limit = Required(float)
-    status = Optional(str)  # DISCONNECTED, NOT_DISCONNECTED, ACTIVE - already exists in DB
+    spare_part = Required(SparePart, column="spare_part_id")
+    responsible_person = Optional(User, column="responsible_person_id")
+
+
+class SparePartActivityHistory(PONY_DATABASE.Entity):
+    _table_ = (schema_name, "spare_part_activity_history")
+
+    id = PrimaryKey(int, auto=True)
+    spare_part_name = Required(str)
+    date_of_identification = Required(datetime)
+    priority = Required(str)
+    target_date_of_completion = Optional(date)
+    corrective_measurement = Required(str)
+    spare_required = Required(str)
+    support_needed = Required(str)
+    date_of_completion = Optional(date)
+
+    machine = Required(Machine, column="machine_id")
+    spare_part = Required(SparePart, column="spare_part_id")
+    responsible_person = Optional(User, column="responsible_person_id")
 
 
 def generate_pony_mapping(create_tables=True):
