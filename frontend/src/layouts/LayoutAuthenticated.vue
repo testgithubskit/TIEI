@@ -1,8 +1,8 @@
 <script setup>
 import { mdiForwardburger, mdiBackburger, mdiMenu } from "@mdi/js";
-import { ref } from "vue";
+import { ref, computed } from "vue";
 import { useRouter } from "vue-router";
-import menuAside from "@/menuAside.js";
+import menuAside, { filterMenuByRole } from "@/menuAside.js";
 import menuNavBar from "@/menuNavBar.js";
 import { useMainStore } from "@/stores/main.js";
 import { useStyleStore } from "@/stores/style.js";
@@ -25,6 +25,9 @@ const layoutAsidePadding = "xl:pl-0";
 const styleStore = useStyleStore();
 
 const router = useRouter();
+
+const filteredMenuAside = computed(() => filterMenuByRole(menuAside));
+const filteredMenuNavBar = computed(() => filterMenuByRole(menuNavBar));
 
 const isAsideMobileExpanded = ref(false);
 const isAsideLgActive = ref(false);
@@ -69,7 +72,7 @@ const menuClick = (event, item) => {
     class="pt-14 min-h-screen w-screen transition-position lg:w-auto bg-gray-50 dark:bg-slate-800 dark:text-slate-100"
   >
       <NavBar
-        :menu="menuNavBar"
+        :menu="filteredMenuNavBar"
         :class="[
           layoutAsidePadding,
           { 'ml-60 lg:ml-0': isAsideMobileExpanded },
@@ -94,7 +97,7 @@ const menuClick = (event, item) => {
       <AsideMenu
         :is-aside-mobile-expanded="isAsideMobileExpanded"
         :is-aside-lg-active="isAsideLgActive"
-        :menu="menuAside"
+        :menu="filteredMenuAside"
         @menu-click="menuClick"
         @aside-lg-close-click="isAsideLgActive = false"
       />

@@ -4,19 +4,15 @@ import {
   mdiEmail,
   mdiAccount,
   mdiPlus,
-  mdiPencil,
-  mdiDelete,
   mdiContentSave,
   mdiClose,
 } from '@mdi/js';
 import SectionMain from '@/components/SectionMain.vue';
 import CardBox from '@/components/CardBox.vue';
 import CardBoxComponentTitle from '@/components/CardBoxComponentTitle.vue';
-import BaseDivider from '@/components/BaseDivider.vue';
 import FormField from '@/components/FormField.vue';
 import FormControl from '@/components/FormControl.vue';
 import BaseButton from '@/components/BaseButton.vue';
-import BaseButtons from '@/components/BaseButtons.vue';
 import LayoutAuthenticated from '@/layouts/LayoutAuthenticated.vue';
 import SectionTitleLineWithButton from '@/components/SectionTitleLineWithButton.vue';
 
@@ -41,7 +37,6 @@ const editUser = reactive({
   email_id: ''
 });
 
-// Computed properties to handle v-model binding
 const currentUserName = computed({
   get: () => showAddForm.value ? newUser.user_name : editUser.user_name,
   set: (value) => {
@@ -70,7 +65,7 @@ const loadEmailUsers = async () => {
     const data = await emailUserService.getAllEmailUsers();
     emailUsers.value = data;
   } catch (error) {
-    showToast('Error loading email users', 'error');
+    showToast(error.response?.data?.detail || 'Error loading email users', 'error');
   } finally {
     isLoading.value = false;
   }
@@ -170,7 +165,6 @@ onMounted(() => {
     <SectionMain>
       <SectionTitleLineWithButton :icon="mdiEmail" title="Email Users" main>
         <BaseButton
-          v-if="!showAddForm && !showEditForm"
           :icon="mdiPlus"
           label="Add Email User"
           color="info"
@@ -178,55 +172,9 @@ onMounted(() => {
         />
       </SectionTitleLineWithButton>
 
-      <!-- Add/Edit Form -->
-      <CardBox v-if="showAddForm || showEditForm" class="mb-6 w-full">
-        <CardBoxComponentTitle :title="showAddForm ? 'Add New Email User' : 'Edit Email User'" />
-        
-        <form @submit.prevent="showAddForm ? addUser() : updateUser()">
-          <FormField label="User Name" help="Required. Enter user name">
-            <FormControl
-              v-model="currentUserName"
-              :icon="mdiAccount"
-              placeholder="Enter user name"
-              required
-            />
-          </FormField>
-
-          <FormField label="Email ID" help="Required. Enter email address">
-            <FormControl
-              v-model="currentUserEmail"
-              :icon="mdiEmail"
-              type="email"
-              placeholder="Enter email address"
-              required
-            />
-          </FormField>
-
-          <BaseDivider />
-
-          <BaseButtons>
-            <BaseButton
-              type="submit"
-              color="info"
-              :label="showAddForm ? 'Add User' : 'Update User'"
-              :icon="mdiContentSave"
-              class="px-6 py-2"
-            />
-            <BaseButton
-              color="danger"
-              label="Cancel"
-              :icon="mdiClose"
-              @click="hideForms"
-              class="px-6 py-2"
-            />
-          </BaseButtons>
-        </form>
-      </CardBox>
-
-      <!-- Email Users List -->
-      <CardBox v-if="!showAddForm && !showEditForm">
+      <CardBox>
         <CardBoxComponentTitle title="Email Users List" />
-        
+
         <div v-if="isLoading" class="text-center py-8">
           <div class="inline-block animate-spin rounded-full h-8 w-8 border-b-2 border-blue-500"></div>
           <p class="mt-2 text-gray-600">Loading email users...</p>
@@ -242,22 +190,18 @@ onMounted(() => {
             <table class="min-w-full divide-y divide-gray-200">
               <thead class="bg-gradient-to-r from-blue-500 to-blue-600">
                 <tr>
-                  <th class="px-6 py-3 text-left text-xs font-bold text-white uppercase tracking-wider">
-                    Sl No
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-bold text-white uppercase tracking-wider">
-                    User Name
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-bold text-white uppercase tracking-wider">
-                    Email ID
-                  </th>
-                  <th class="px-6 py-3 text-left text-xs font-bold text-white uppercase tracking-wider">
-                    Actions
-                  </th>
+                  <th class="px-6 py-3 text-left text-xs font-bold text-white uppercase tracking-wider">Sl No</th>
+                  <th class="px-6 py-3 text-left text-xs font-bold text-white uppercase tracking-wider">User Name</th>
+                  <th class="px-6 py-3 text-left text-xs font-bold text-white uppercase tracking-wider">Email ID</th>
+                  <th class="px-6 py-3 text-left text-xs font-bold text-white uppercase tracking-wider">Actions</th>
                 </tr>
               </thead>
               <tbody class="bg-white divide-y divide-gray-200">
-                <tr v-for="(user, index) in emailUsers" :key="user.id" class="hover:bg-blue-50 transition-colors duration-200">
+                <tr
+                  v-for="(user, index) in emailUsers"
+                  :key="user.id"
+                  class="hover:bg-blue-50 transition-colors duration-200"
+                >
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-semibold text-gray-700">
                     {{ index + 1 }}
                   </td>
@@ -282,23 +226,19 @@ onMounted(() => {
                   <td class="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div class="flex space-x-2">
                       <button
-                        @click="showEditUserForm(user)"
+                        type="button"
                         class="inline-flex items-center px-3 py-1.5 bg-yellow-500 hover:bg-yellow-600 text-white rounded-md transition-colors duration-200 text-xs font-medium"
                         title="Edit"
+                        @click="showEditUserForm(user)"
                       >
-                        <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                        </svg>
                         Edit
                       </button>
                       <button
-                        @click="deleteUser(user)"
+                        type="button"
                         class="inline-flex items-center px-3 py-1.5 bg-red-500 hover:bg-red-600 text-white rounded-md transition-colors duration-200 text-xs font-medium"
                         title="Delete"
+                        @click="deleteUser(user)"
                       >
-                        <svg class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                        </svg>
                         Delete
                       </button>
                     </div>
@@ -312,6 +252,169 @@ onMounted(() => {
           </div>
         </div>
       </CardBox>
+
+      <Teleport to="body">
+        <Transition name="user-modal">
+          <div
+            v-if="showAddForm || showEditForm"
+            class="user-modal-overlay"
+            @click.self="hideForms"
+          >
+            <div class="user-modal-panel" role="dialog" aria-modal="true">
+              <div class="user-modal-header">
+                <div>
+                  <p class="user-modal-kicker">{{ showAddForm ? 'Create' : 'Update' }}</p>
+                  <h3 class="user-modal-title">
+                    {{ showAddForm ? 'Add New Email User' : 'Edit Email User' }}
+                  </h3>
+                </div>
+                <button type="button" class="user-modal-close" aria-label="Close" @click="hideForms">
+                  <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              <form class="user-modal-body" @submit.prevent="showAddForm ? addUser() : updateUser()">
+                <FormField label="User Name" help="Required. Enter user name">
+                  <FormControl
+                    v-model="currentUserName"
+                    :icon="mdiAccount"
+                    placeholder="Enter user name"
+                    required
+                  />
+                </FormField>
+
+                <FormField label="Email ID" help="Required. Enter email address">
+                  <FormControl
+                    v-model="currentUserEmail"
+                    :icon="mdiEmail"
+                    type="email"
+                    placeholder="Enter email address"
+                    required
+                  />
+                </FormField>
+
+                <div class="user-modal-actions">
+                  <BaseButton
+                    color="danger"
+                    label="Cancel"
+                    :icon="mdiClose"
+                    outline
+                    @click="hideForms"
+                  />
+                  <BaseButton
+                    type="submit"
+                    color="info"
+                    :label="showAddForm ? 'Add User' : 'Update User'"
+                    :icon="mdiContentSave"
+                  />
+                </div>
+              </form>
+            </div>
+          </div>
+        </Transition>
+      </Teleport>
     </SectionMain>
   </LayoutAuthenticated>
 </template>
+
+<style scoped>
+.user-modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10050;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1.25rem;
+  background: rgba(15, 23, 42, 0.55);
+  backdrop-filter: blur(4px);
+}
+
+.user-modal-panel {
+  width: min(100%, 28rem);
+  max-height: calc(100vh - 2.5rem);
+  overflow: auto;
+  background: #fff;
+  border-radius: 1rem;
+  box-shadow: 0 25px 50px -12px rgba(15, 23, 42, 0.35);
+  border: 1px solid #e2e8f0;
+}
+
+.user-modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1.25rem 1.5rem 0.75rem;
+  border-bottom: 1px solid #e2e8f0;
+}
+
+.user-modal-kicker {
+  margin: 0;
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #0284c7;
+}
+
+.user-modal-title {
+  margin: 0.15rem 0 0;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #0f172a;
+}
+
+.user-modal-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border-radius: 9999px;
+  color: #64748b;
+  background: #f1f5f9;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+
+.user-modal-close:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
+
+.user-modal-body {
+  padding: 1.25rem 1.5rem 1.5rem;
+}
+
+.user-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid #e2e8f0;
+}
+
+.user-modal-enter-active,
+.user-modal-leave-active {
+  transition: opacity 0.2s ease;
+}
+
+.user-modal-enter-active .user-modal-panel,
+.user-modal-leave-active .user-modal-panel {
+  transition: transform 0.2s ease, opacity 0.2s ease;
+}
+
+.user-modal-enter-from,
+.user-modal-leave-to {
+  opacity: 0;
+}
+
+.user-modal-enter-from .user-modal-panel,
+.user-modal-leave-to .user-modal-panel {
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+}
+</style>

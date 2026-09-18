@@ -58,6 +58,21 @@ class RequestUserModel(BaseModel):
     company_id: Optional[int] = None
 
 
+class RequestUserUpdateModel(BaseModel):
+    """
+    PYDANTIC MODEL FOR UPDATING AN APP USER
+    =======================================
+
+    Password is optional — omit or leave empty to keep the existing password.
+    """
+
+    username: Optional[str] = None
+    email: Optional[str] = None
+    password: Optional[str] = None
+    role: Optional[str] = None
+    company_id: Optional[int] = None
+
+
 class PendingActivityModel(BaseModel):
     """
     PYDANTIC MODEL FOR USER IN DATABASE

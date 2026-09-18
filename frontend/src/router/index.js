@@ -316,8 +316,9 @@ const routes = [
   },
   {
     meta: {
-      title: "Profile",
+      title: "Users",
       requiresAuth: true,
+      requiresAdmin: true,
     },
     path: "/profile",
     name: "profile",
@@ -327,6 +328,7 @@ const routes = [
     meta: {
       title: "Email Users",
       requiresAuth: true,
+      requiresAdmin: true,
     },
     path: "/email-users",
     name: "email-users",
@@ -379,15 +381,19 @@ const router = createRouter({
 // Navigation guard to check authentication status before navigating to protected routes
 router.beforeEach((to, from, next) => {
   const isAuthenticated = !!localStorage.getItem("token");
+  const isAdmin = localStorage.getItem("role") === "admin";
 
   if (to.meta.requiresAuth && !isAuthenticated) {
-    // Redirect to the login page if trying to access a protected route without authentication
-    // alert("Not authenticated Please Login")
     next("/");
-  } else {
-    // Proceed to the next route
-    next();
+    return;
   }
+
+  if (to.meta.requiresAdmin && !isAdmin) {
+    next("/managerialOverview");
+    return;
+  }
+
+  next();
 });
 
 export default router;

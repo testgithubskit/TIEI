@@ -4577,6 +4577,49 @@ def create_user(username: str, hashed_password: str,
 
 
 @db_session
+def update_user(user_id: int,
+                username: Optional[str] = None,
+                email: Optional[str] = None,
+                hashed_password: Optional[str] = None,
+                role: Optional[str] = None,
+                company_id: Optional[int] = None):
+    """
+    UPDATE USER
+    ===========
+
+    Update an existing app login user. Only provided fields are changed.
+    """
+    user = UserPony.get(id=user_id)
+    if not user:
+        return None
+
+    if user.username == "cmti" and username is not None and username != "cmti":
+        return {"detail": "admin"}
+
+    if username is not None and username != user.username:
+        conflict = UserPony.select(
+            lambda current_user: current_user.username == username and current_user.id != user_id
+        ).first()
+        if conflict:
+            return {"detail": "username_exists"}
+        user.username = username
+
+    if email is not None:
+        user.email = email
+    if hashed_password is not None:
+        user.hashed_password = hashed_password
+    if role is not None:
+        user.role = role
+    if company_id is not None:
+        user.company_id = company_id
+
+    commit()
+    user_data = user.to_dict()
+    user_data.pop("hashed_password", None)
+    return UserPydantic(**user_data)
+
+
+@db_session
 def get_spare_parts(machine_name: str):
     """
     GET SPARE PARTs

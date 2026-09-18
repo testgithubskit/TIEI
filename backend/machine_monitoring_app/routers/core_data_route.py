@@ -55,7 +55,7 @@ from machine_monitoring_app.models.response_models import CurrentData, FullTimel
 
 from machine_monitoring_app.database.crud_operations import get_current_machine_data, get_machine_timeline, \
     create_spare_part, update_spare_part, get_alarm_summary_data, delete_spare_part, update_parameter_limits, \
-    get_machine_parameter_timeline_spm, get_users, delete_user, update_parameter_limits_spm, \
+    get_machine_parameter_timeline_spm, get_users, delete_user, update_user, update_parameter_limits_spm, \
     get_machine_parameters_state, \
     get_all_machine_spm_status_active, get_similar_part, get_spare_part_states, get_real_time_data_parts, \
     get_latest_snapshot_for_parameter_group, get_machine_timeline_parameter_name, \
@@ -85,7 +85,7 @@ from machine_monitoring_app.database import TIMESCALEDB_URL
 from machine_monitoring_app.exception_handling.custom_exceptions import NoParameterGroupError, GetParamGroupDBError, \
     GetAllParameterDBError, GetMachineTimelineError
 
-from machine_monitoring_app.routers.router_dependencies import get_current_active_user, is_admin
+from machine_monitoring_app.routers.router_dependencies import get_current_active_user, is_admin, get_password_hash
 from machine_monitoring_app.database.crud_operations import get_full_day_summary, get_full_month_week_summary, \
     get_spare_parts, get_machine_parameters
 
@@ -93,7 +93,7 @@ from machine_monitoring_app.models.base_data_models import User
 
 from machine_monitoring_app.models.request_models import PendingActivityListModel, \
     SparePartsToDeleteModel, SparePartUpdateList, SparePartPost, ParameterComparisonInput, \
-    UpdateParameterComparisonInput
+    UpdateParameterComparisonInput, RequestUserUpdateModel
 
 LOGGER = logging.getLogger(__name__)
 
@@ -1070,6 +1070,48 @@ def delete_spare_part_method(machineName: str, spare_parts: SparePartsToDeleteMo
     raise HTTPException(status_code=404, detail="Given Spare Part / Machine Not Found")
 
 
+@ROUTER.put("/user/{userId}", response_model=User)
+def update_user_method(
+    userId: int,
+    user_update: RequestUserUpdateModel,
+    current_user: User = Depends(get_current_active_user),
+):
+    """
+    UPDATE USER
+    ===========
+
+    Admin-only endpoint to update an existing app login user.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authorized to update, Only admin can update users",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    update_payload = user_update.dict(exclude_unset=True)
+    raw_password = update_payload.pop("password", None)
+    if raw_password:
+        update_payload["hashed_password"] = get_password_hash(raw_password)
+
+    response = update_user(user_id=userId, **update_payload)
+
+    if response is None:
+        raise HTTPException(status_code=404, detail="Given User Not Found")
+
+    if isinstance(response, dict):
+        if response.get("detail") == "admin":
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Not authorized to rename Super User cmti",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+        if response.get("detail") == "username_exists":
+            raise HTTPException(status_code=409, detail="Username already exists")
+
+    return response
+
+
 @ROUTER.delete("/user/{userId}", response_model=UserDeleteResponseModel)
 def delete_user_method(userId: int, current_user: User = Depends(get_current_active_user)):
     """
@@ -1241,13 +1283,19 @@ async def read_timeline_machine_param_spm(machineName: str, parameterName: str, 
 
 
 @ROUTER.get("/users", response_model=UsersResponseModel)
-def read_all_users():
+def read_all_users(current_user: User = Depends(get_current_active_user)):
     """
     End point used to get all the available users
 
     :return: Dictionary consisting of a single list with all the available users
     :rtype: UsersResponseModel
     """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Not authorized, Only admin can view users",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
 
     start_time = time.time()
     response_data = {"user_data": get_users()}

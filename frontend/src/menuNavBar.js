@@ -39,8 +39,9 @@ export default [
     menu: [
       {
         icon: mdiAccount,
-        label: "My Profile",
+        label: "Users",
         to: "/profile",
+        requiresAdmin: true,
       },
       {
         icon: mdiCogOutline,

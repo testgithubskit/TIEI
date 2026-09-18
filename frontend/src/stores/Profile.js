@@ -20,7 +20,7 @@ export const useProfileStore = defineStore('ProfileStore', {
   }),
   actions: {
     async setProfileForm(formData) {
-      const url = '/register';
+      const url = '/register/';
 
       this.profileForm = formData;
       const postProfile = this.profileForm;

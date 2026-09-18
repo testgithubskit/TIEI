@@ -111,17 +111,39 @@ export default [
   {
     icon: mdiCog,
     label: "Configuration",
+    requiresAdmin: true,
     menu: [
       {
         to: "/profile",
-        label: "Profile",
+        label: "Users",
         icon: mdiAccountCircle,
+        requiresAdmin: true,
       },
       {
         to: "/email-users",
         label: "Email Users",
         icon: mdiEmail,
+        requiresAdmin: true,
       }
     ]
   }
 ];
+
+export function filterMenuByRole(menuItems = [], role = localStorage.getItem('role')) {
+  const isAdmin = role === 'admin';
+  return menuItems
+    .map((item) => {
+      if (item.requiresAdmin && !isAdmin) {
+        return null;
+      }
+      if (Array.isArray(item.menu)) {
+        const children = item.menu.filter((child) => !child.requiresAdmin || isAdmin);
+        if (!children.length) {
+          return null;
+        }
+        return { ...item, menu: children };
+      }
+      return item;
+    })
+    .filter(Boolean);
+}
