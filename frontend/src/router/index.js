@@ -3,6 +3,7 @@ import Home from "@/views/HomeView.vue";
 import MachineLevelPolling from "@/views/MachineLevelPolling.vue";
 import MachineLevelSamplingWithLimits from "@/views/MachineLevelSamplingWithLimits.vue";
 import AirPressureSamplingView from "@/views/AirPressureSamplingView.vue";
+import VibrationSamplingView from "@/views/VibrationSamplingView.vue";
 import PlantLevelPollingKpi from "@/views/PlantLevelPollingKpi.vue";
 import FactoryPollOverview from "@/views/FactoryPollOverview.vue";
 import SparePollOverview from "@/views/SparePollOverview.vue";
@@ -169,6 +170,15 @@ const routes = [
     path: "/air-pressure-sampling",
     name: "Air Pressure Sampling",
     component: AirPressureSamplingView,
+  },
+  {
+    meta: {
+      title: "Vibration-Sampling",
+      requiresAuth: true,
+    },
+    path: "/vibration-sampling",
+    name: "Vibration Sampling",
+    component: VibrationSamplingView,
   },
 
   {

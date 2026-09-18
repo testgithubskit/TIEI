@@ -1,5 +1,5 @@
 <script setup>
-import { computed, ref, onBeforeMount, onMounted, watch } from "vue";
+import { computed, ref, watch, onBeforeMount, onMounted } from "vue";
 import flatPickr from 'vue-flatpickr-component';
 import 'flatpickr/dist/flatpickr.css';
 
@@ -9,594 +9,50 @@ import LayoutAuthenticatedSimple from "@/layouts/LayoutAuthenticatedSimple.vue";
 import Toastify from 'toastify-js';
 import 'toastify-js/src/toastify.css';
 
-import {
-  useMachineSamplingWithLimitsStore,
-  PRESSURE_DEFAULT_RANGE_SECONDS,
-} from '@/stores/MachineSamplingWithLimitsStore';
+import { useVibrationSamplingStore, VIBRATION_PARAMETERS } from '@/stores/VibrationSamplingStore';
 import { useNavigationHistoryStore } from '@/stores/navigationHistoryStore';
 import { useRouter } from 'vue-router';
 
 const router = useRouter();
 const navigationHistoryStore = useNavigationHistoryStore();
-const machineSamplingWithLimitsStore = useMachineSamplingWithLimitsStore();
+const store = useVibrationSamplingStore();
 
-const warningLimit = computed(() => machineSamplingWithLimitsStore.warningLimit);
-const criticalLimit = computed(() => machineSamplingWithLimitsStore.criticalLimit);
-const chartData = computed(() => machineSamplingWithLimitsStore.chartData);
-const AIR_HONING_MACHINE_NAME = 'T_B_OP200';
-const AIR_HONING_SIGNAL_NAMES = new Set(['2nd Rough', '4th Finish', '6th Finish', '6TH FINISH']);
+const warningLimit = computed(() => store.warningLimit);
+const criticalLimit = computed(() => store.criticalLimit);
+const chartData = computed(() => store.chartData);
+const lineName = computed(() => store.lineName || '—');
+const vibrationMachineDisplayName = computed(() => store.machine || '—');
+const vibrationPortDisplayName = computed(() => store.port || '—');
 
-/** Air honing / air pressure always sits on BLOCK line. */
-const lineName = computed(() => 'BLOCK');
-
-/** DB machine key is the signal (2nd Rough / 4th Finish); display machine is T_B_OP200. */
-const pressureMachineDisplayName = computed(() => AIR_HONING_MACHINE_NAME);
-
-const pressureSignalDisplayName = computed(() => {
-  const fromStore = machineSamplingWithLimitsStore.machine;
-  if (AIR_HONING_SIGNAL_NAMES.has(fromStore)) return fromStore;
-  const fromDisplay = machineSamplingWithLimitsStore.displayName
-    || machineSamplingWithLimitsStore.lastSelectedParameter?.displayName
-    || machineSamplingWithLimitsStore.lastSelectedParameter?.signal_name;
-  if (AIR_HONING_SIGNAL_NAMES.has(fromDisplay)) return fromDisplay;
-  return fromStore || '—';
-});
-
-const isPressureLogListLoading = ref(false);
-const isPressureGraphLoading = ref(false);
-const MAX_PRESSURE_LOG_SELECTIONS = 5;
-const isUpdatingPressureBaseline = ref(false);
-
-// Show/Hide baseline series on graph
+const isLogListLoading = ref(false);
+const isGraphLoading = ref(false);
+const MAX_SELECTIONS = 5;
+const isUpdatingBaseline = ref(false);
 const isBaselineVisible = ref(true);
+const sortColumn = ref('date');
+const sortOrder = ref('desc');
+const isFilterCollapsed = ref(true);
+const isLimitsCollapsed = ref(true);
+const expandedRowId = ref(null);
+const isSavingLimits = ref(false);
+const editableWarningLimit = ref(null);
+const editableCriticalLimit = ref(null);
 
-// Header Table Sorting
-const sortColumn = ref('date'); // 'date' | 'time'
-const sortOrder = ref('desc');  // 'asc' | 'desc'
-
-function toggleSort(col) {
-  if (sortColumn.value === col) {
-    sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
-  } else {
-    sortColumn.value = col;
-    sortOrder.value = 'desc';
-  }
-}
-
-const pressureDateRange = ref({
-  startDate: '',
-  endDate: '',
-});
-
-function formatPressureYmd(dateObj) {
+function formatYmd(dateObj) {
   const year = dateObj.getFullYear();
   const month = String(dateObj.getMonth() + 1).padStart(2, '0');
   const day = String(dateObj.getDate()).padStart(2, '0');
   return `${year}-${month}-${day}`;
 }
 
-function buildDefaultPressureLogDateRange() {
+function buildDefaultDateRange() {
   const end = new Date();
   const start = new Date();
   start.setDate(end.getDate() - 30);
-  return {
-    startDate: formatPressureYmd(start),
-    endDate: formatPressureYmd(end),
-  };
+  return { startDate: formatYmd(start), endDate: formatYmd(end) };
 }
 
-const pressureMaxSelectableDate = computed(() => {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  const day = String(now.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-});
-
-const pressureFromDateConfig = computed(() => ({
-  dateFormat: 'Y-m-d',
-  altInput: true,
-  altFormat: 'd-m-Y',
-  allowInput: false,
-  disableMobile: true,
-  maxDate: pressureDateRange.value.endDate || pressureMaxSelectableDate.value,
-  onReady: (_dates, _str, instance) => {
-    instance.calendarContainer.classList.add('pressure-fp-calendar');
-  },
-}));
-
-const pressureToDateConfig = computed(() => ({
-  dateFormat: 'Y-m-d',
-  altInput: true,
-  altFormat: 'd-m-Y',
-  allowInput: false,
-  disableMobile: true,
-  minDate: pressureDateRange.value.startDate || undefined,
-  maxDate: pressureMaxSelectableDate.value,
-  onReady: (_dates, _str, instance) => {
-    instance.calendarContainer.classList.add('pressure-fp-calendar');
-  },
-}));
-
-const pressureLogFiles = computed(() => machineSamplingWithLimitsStore.pressureLogFiles || []);
-const pressureComparisonSeries = computed(() => machineSamplingWithLimitsStore.pressureComparisonSeries || []);
-const selectedPressureLogFileIds = computed(() => machineSamplingWithLimitsStore.selectedPressureLogFileIds || []);
-const baselineLogFileId = computed(() => machineSamplingWithLimitsStore.baselineLogFileId);
-
-// Filter baseline series out of graph when isBaselineVisible is false
-const displayPressureComparisonSeries = computed(() => {
-  const rawSeries = pressureComparisonSeries.value || [];
-  if (isBaselineVisible.value) {
-    return rawSeries;
-  }
-  return rawSeries.filter((series) => !series.baseline);
-});
-
-const pressureHasChartSeries = computed(() => displayPressureComparisonSeries.value.some((series) => Array.isArray(series.chart_data) && series.chart_data.length > 0));
-
-// Exclude baseline timestamp from the table list & apply header sorting
-const displayPressureLogFiles = computed(() => {
-  let list = pressureLogFiles.value;
-  if (baselineLogFileId.value != null) {
-    list = list.filter((item) => item.log_file_id !== baselineLogFileId.value);
-  }
-
-  return [...list].sort((a, b) => {
-    const rawA = a.time_stamp || a.processed_time || '';
-    const rawB = b.time_stamp || b.processed_time || '';
-
-    if (sortColumn.value === 'date') {
-      const dateA = formatProcessedDateOnly(rawA);
-      const dateB = formatProcessedDateOnly(rawB);
-      const cmp = dateA.localeCompare(dateB);
-      if (cmp !== 0) return sortOrder.value === 'asc' ? cmp : -cmp;
-
-      const timeA = formatProcessedTimeOnly(rawA);
-      const timeB = formatProcessedTimeOnly(rawB);
-      return sortOrder.value === 'asc' ? timeA.localeCompare(timeB) : -timeA.localeCompare(timeB);
-    } else if (sortColumn.value === 'time') {
-      const timeA = formatProcessedTimeOnly(rawA);
-      const timeB = formatProcessedTimeOnly(rawB);
-      const cmp = timeA.localeCompare(timeB);
-      if (cmp !== 0) return sortOrder.value === 'asc' ? cmp : -cmp;
-
-      const dateA = formatProcessedDateOnly(rawA);
-      const dateB = formatProcessedDateOnly(rawB);
-      return sortOrder.value === 'asc' ? dateA.localeCompare(dateB) : -dateA.localeCompare(dateB);
-    }
-    return 0;
-  });
-});
-
-const baselineLogFileLabel = computed(() => {
-  if (!baselineLogFileId.value) return 'None Selected';
-
-  const baselineRow = pressureLogFiles.value.find((item) => item.log_file_id === baselineLogFileId.value);
-  const raw = baselineRow?.time_stamp || baselineRow?.processed_time;
-  if (raw) {
-    const datePart = formatProcessedDateOnly(raw);
-    const timePart = formatProcessedTimeOnly(raw);
-    return [datePart, timePart].filter(Boolean).join(' ');
-  }
-
-  const baselineSeries = pressureSeriesLegend.value?.find((s) => s.baseline);
-  if (baselineSeries && baselineSeries.label) {
-    return baselineSeries.label.replace('Baseline (', '').replace(')', '').trim() || 'Baseline Active';
-  }
-
-  return 'Baseline Active';
-});
-
-const canUpdateBaseline = computed(() => selectedPressureLogFileIds.value.length === 1);
-const hasBaseline = computed(() => baselineLogFileId.value != null);
-const hasPressureSelections = computed(() => selectedPressureLogFileIds.value.length > 0);
-
-function formatProcessedDateOnly(value) {
-  if (value == null || value === '') {
-    return '';
-  }
-  const text = String(value).trim();
-  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (iso) {
-    return iso[1];
-  }
-  const dmy = text.match(/^(\d{1,2}\/\d{1,2}\/\d{2,4})/);
-  if (dmy) {
-    return dmy[1];
-  }
-  if (text.includes(',')) {
-    return text.split(',')[0].trim();
-  }
-  return text.split(/\s+/)[0] || text;
-}
-
-function formatProcessedTimeOnly(value) {
-  if (value == null || value === '') {
-    return '';
-  }
-  const text = String(value).trim();
-  let timePart = '';
-  if (text.includes(',')) {
-    timePart = text.split(',').slice(1).join(',').trim();
-  } else {
-    const isoSplit = text.match(/^\d{4}-\d{2}-\d{2}[ T](.+)$/);
-    if (isoSplit) {
-      timePart = isoSplit[1].trim();
-    } else {
-      const parts = text.split(/\s+/);
-      timePart = parts.length > 1 ? parts.slice(1).join(' ') : '';
-    }
-  }
-  const hhmmss = timePart.match(/^(\d{1,2}:\d{2}:\d{2})/);
-  return hhmmss ? hhmmss[1] : timePart.replace(/\.\d+.*$/, '');
-}
-
-const pressureSeriesLegend = computed(() => {
-  let colorIdx = 0;
-  return displayPressureComparisonSeries.value
-    .filter((series) => Array.isArray(series.chart_data) && series.chart_data.length > 0)
-    .map((series) => {
-      const isBaseline = !!series.baseline;
-      const dateOnly = formatProcessedDateOnly(series.processed_time || series.label || '');
-      const timeOnly = formatProcessedTimeOnly(series.processed_time || series.label || '');
-      const fullLabel = [dateOnly, timeOnly].filter(Boolean).join(' ');
-      const color = isBaseline
-        ? 'rgb(185, 28, 28)'
-        : ['rgb(37, 99, 235)', 'rgb(147, 51, 234)', 'rgb(219, 39, 119)'][colorIdx++ % 3];
-      return {
-        label: isBaseline
-          ? (fullLabel ? `Baseline (${fullLabel})` : 'Baseline')
-          : (fullLabel ? `Compare (${fullLabel})` : 'Compare'),
-        shortLabel: isBaseline ? 'Baseline' : dateOnly,
-        baseline: isBaseline,
-        color,
-      };
-    });
-});
-
-const isPressureCompareMode = computed(() => {
-  const activeSeries = displayPressureComparisonSeries.value.filter(
-    (series) => Array.isArray(series.chart_data) && series.chart_data.length > 0,
-  );
-  return activeSeries.length > 1;
-});
-
-function resetPressureHoverData() {
-  machineSamplingWithLimitsStore.hoverData = {
-    xAxisLabel: 'Timestamp',
-    xAxisValue: '',
-    yAxisLabel: 'Air Pressure',
-    yAxisValue: '',
-    xAxisUnits: 'DateTime',
-    yAxisUnits: 'Pa',
-  };
-}
-
-function resolveIsPressure() {
-  const group = (machineSamplingWithLimitsStore.parameterGroup || '').toUpperCase();
-  const param = (machineSamplingWithLimitsStore.actualParameterName || '').toUpperCase();
-  return (
-    machineSamplingWithLimitsStore.isPressureContext
-    || group === 'AIR_PRESSURE'
-    || param === 'AIR_PRESSURE'
-    || machineSamplingWithLimitsStore.lastSelectedParameter?.is_pressure_machine === true
-  );
-}
-
-function initializePressureDates({ forceRefreshDates = false } = {}) {
-  machineSamplingWithLimitsStore.isPressureMachine = true;
-  if (machineSamplingWithLimitsStore.lastSelectedParameter) {
-    machineSamplingWithLimitsStore.setMachineDetails({
-      ...machineSamplingWithLimitsStore.lastSelectedParameter,
-      initializePressureDates: forceRefreshDates,
-    });
-  } else if (forceRefreshDates) {
-    machineSamplingWithLimitsStore.refreshPressureTimestamp(PRESSURE_DEFAULT_RANGE_SECONDS);
-  }
-}
-
-function initializePressureLogDateRange() {
-  pressureDateRange.value = buildDefaultPressureLogDateRange();
-}
-
-let pressureGraphRequestId = 0;
-
-async function refreshPressureComparisonGraph() {
-  const selectedIds = [...selectedPressureLogFileIds.value];
-  if (selectedIds.length === 0 && !baselineLogFileId.value) {
-    machineSamplingWithLimitsStore.pressureComparisonSeries = [];
-    machineSamplingWithLimitsStore.chartData = [[0, 0]];
-    machineSamplingWithLimitsStore.chartFetchMessage = 'Choose one or more timestamps from the left panel to view the graph.';
-    resetPressureHoverData();
-    return;
-  }
-
-  const requestId = ++pressureGraphRequestId;
-  isPressureGraphLoading.value = true;
-  try {
-    await machineSamplingWithLimitsStore.fetchPressureComparisonData(selectedIds, true);
-  } catch (error) {
-    Toastify({
-      text: error.response?.data?.detail || 'Failed to load pressure comparison graph.',
-      duration: 5000,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#ef4444',
-    }).showToast();
-  } finally {
-    if (requestId === pressureGraphRequestId) {
-      isPressureGraphLoading.value = false;
-    }
-  }
-}
-
-async function loadPressureLogFiles({ refreshGraph = true, allowUnfilteredFallback = false } = {}) {
-  isPressureLogListLoading.value = true;
-  try {
-    let response = await machineSamplingWithLimitsStore.fetchPressureLogFiles(
-      pressureDateRange.value.startDate,
-      pressureDateRange.value.endDate,
-    );
-    let logFiles = response.log_files || [];
-
-    // If default 30-day window has no rows, widen to all timestamps once.
-    if (
-      allowUnfilteredFallback
-      && logFiles.length === 0
-      && (pressureDateRange.value.startDate || pressureDateRange.value.endDate)
-    ) {
-      pressureDateRange.value = { startDate: '', endDate: '' };
-      response = await machineSamplingWithLimitsStore.fetchPressureLogFiles('', '');
-      logFiles = response.log_files || [];
-    }
-
-    const validIds = new Set(logFiles.map((item) => item.log_file_id));
-    const baselineId = response.baseline_log_file_id ?? baselineLogFileId.value;
-    let selected = selectedPressureLogFileIds.value
-      .filter((id) => validIds.has(id) && id !== baselineId)
-      .slice(0, MAX_PRESSURE_LOG_SELECTIONS);
-
-    // Default graph: baseline + latest run (auto-select newest non-baseline file)
-    if (selected.length === 0) {
-      const latestRun = logFiles.find((item) => {
-        const id = item.log_file_id;
-        return id != null && id !== baselineId && !item.baseline;
-      });
-      if (latestRun) {
-        selected = [latestRun.log_file_id];
-      }
-    }
-
-    machineSamplingWithLimitsStore.selectedPressureLogFileIds = selected;
-    if (refreshGraph) {
-      await refreshPressureComparisonGraph();
-    }
-  } catch (error) {
-    resetPressureHoverData();
-    Toastify({
-      text: error.response?.data?.detail || 'Failed to load pressure timestamps.',
-      duration: 5000,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#ef4444',
-    }).showToast();
-  } finally {
-    isPressureLogListLoading.value = false;
-  }
-}
-
-async function clearPressureStartDate() {
-  pressureDateRange.value.startDate = '';
-  await loadPressureLogFiles({ refreshGraph: true });
-}
-
-async function clearPressureEndDate() {
-  pressureDateRange.value.endDate = '';
-  await loadPressureLogFiles({ refreshGraph: true });
-}
-
-async function resetPressureFilter() {
-  // Reset = restore default last-30-days window
-  pressureDateRange.value = buildDefaultPressureLogDateRange();
-  await loadPressureLogFiles({ refreshGraph: true, allowUnfilteredFallback: true });
-}
-
-async function handlePressureLogSelection(logFileId, checked) {
-  const currentIds = [...selectedPressureLogFileIds.value];
-  if (checked) {
-    if (currentIds.includes(logFileId)) {
-      return;
-    }
-    if (currentIds.length >= MAX_PRESSURE_LOG_SELECTIONS) {
-      Toastify({
-        text: `Maximum of ${MAX_PRESSURE_LOG_SELECTIONS} runs can be selected for preview.`,
-        duration: 3500,
-        close: true,
-        gravity: 'top',
-        position: 'right',
-        backgroundColor: '#ef4444',
-      }).showToast();
-      return;
-    }
-    currentIds.push(logFileId);
-  } else {
-    const nextIds = currentIds.filter((id) => id !== logFileId);
-    currentIds.splice(0, currentIds.length, ...nextIds);
-  }
-
-  machineSamplingWithLimitsStore.selectedPressureLogFileIds = currentIds;
-  await refreshPressureComparisonGraph();
-}
-
-function handleRowClick(logFileId) {
-  const isSelected = selectedPressureLogFileIds.value.includes(logFileId);
-  if (!isSelected && selectedPressureLogFileIds.value.length >= MAX_PRESSURE_LOG_SELECTIONS) {
-    Toastify({
-      text: `Maximum of ${MAX_PRESSURE_LOG_SELECTIONS} runs can be selected for preview.`,
-      duration: 3500,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#ef4444',
-    }).showToast();
-    return;
-  }
-  handlePressureLogSelection(logFileId, !isSelected);
-}
-
-function selectAllPressureSelections() {
-  if (!displayPressureLogFiles.value.length) {
-    return;
-  }
-  const maxToSelect = displayPressureLogFiles.value
-    .slice(0, MAX_PRESSURE_LOG_SELECTIONS)
-    .map((item) => item.log_file_id);
-  machineSamplingWithLimitsStore.selectedPressureLogFileIds = maxToSelect;
-  refreshPressureComparisonGraph();
-}
-
-async function clearAllPressureSelections() {
-  if (!selectedPressureLogFileIds.value.length) {
-    return;
-  }
-  machineSamplingWithLimitsStore.selectedPressureLogFileIds = [];
-  await refreshPressureComparisonGraph();
-}
-
-async function handlePressureBaselineUpdate() {
-  if (!canUpdateBaseline.value) {
-    return;
-  }
-
-  isUpdatingPressureBaseline.value = true;
-  try {
-    const result = await machineSamplingWithLimitsStore.updatePressureBaseline(
-      selectedPressureLogFileIds.value[0],
-    );
-    await loadPressureLogFiles({ refreshGraph: false });
-    await refreshPressureComparisonGraph();
-    const recalc = result?.rmse_recalculation || {};
-    const elapsedMs = recalc.elapsed_ms;
-    const filesUpdated = recalc.files_updated;
-    const timingPart = Number.isFinite(Number(elapsedMs))
-      ? ` RMSE recalculated for ${filesUpdated ?? '—'} file(s) in ${Number(elapsedMs).toFixed(1)} ms.`
-      : '';
-    if (Number.isFinite(Number(elapsedMs))) {
-      console.log(
-        `[pressure RMSE] baseline update files_updated=${filesUpdated} elapsed_ms=${Number(elapsedMs).toFixed(1)}`,
-      );
-    }
-    Toastify({
-      text: (result?.message || 'Baseline updated successfully.') + (result?.message ? '' : timingPart),
-      duration: 5000,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#10b981',
-    }).showToast();
-  } catch (error) {
-    Toastify({
-      text: error.response?.data?.detail || 'Failed to update baseline.',
-      duration: 5000,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#ef4444',
-    }).showToast();
-  } finally {
-    isUpdatingPressureBaseline.value = false;
-  }
-}
-
-async function handlePressureBaselineClear() {
-  if (!hasBaseline.value) {
-    return;
-  }
-
-  isUpdatingPressureBaseline.value = true;
-  try {
-    await machineSamplingWithLimitsStore.clearPressureBaseline();
-    await loadPressureLogFiles({ refreshGraph: false });
-    await refreshPressureComparisonGraph();
-    Toastify({
-      text: 'Baseline cleared.',
-      duration: 3000,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#10b981',
-    }).showToast();
-  } catch (error) {
-    Toastify({
-      text: error.response?.data?.detail || 'Failed to clear baseline.',
-      duration: 5000,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#ef4444',
-    }).showToast();
-  } finally {
-    isUpdatingPressureBaseline.value = false;
-  }
-}
-
-function convertEpochToLocal(epochTimestamp) {
-  const date = new Date(epochTimestamp);
-  const options = {
-    year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-    timeZoneName: 'short',
-  };
-  return date.toLocaleString('en-IN', options);
-}
-
-function formatElapsedHover(ms) {
-  const COMPARE_EPOCH_BASE = new Date(2000, 0, 1).getTime();
-  const elapsedMs = ms - COMPARE_EPOCH_BASE;
-  if (!Number.isFinite(elapsedMs)) {
-    return '';
-  }
-  if (elapsedMs >= 60000) {
-    return `${(elapsedMs / 60000).toFixed(2)} min`;
-  }
-  if (elapsedMs >= 1000) {
-    return `${(elapsedMs / 1000).toFixed(2)} s`;
-  }
-  return `${Math.round(elapsedMs)} ms`;
-}
-
-function OnHoverCallBack(hoverData){
-  if (!hoverData?.length) return;
-  const preferredPoint = hoverData.find((point) => point?.name && !String(point.name).includes('Limit') && point.yval != null) || hoverData[0];
-  const xval = preferredPoint.xval;
-  const isCompare = isPressureCompareMode.value;
-  const dateTime = isCompare
-    ? formatElapsedHover(xval)
-    : (typeof xval === 'number'
-      ? convertEpochToLocal(xval)
-      : String(xval));
-  machineSamplingWithLimitsStore.hoverData = {
-    xAxisValue: dateTime,
-    yAxisValue: preferredPoint.yval,
-    xAxisLabel: isCompare ? 'Elapsed Time' : 'Timestamp',
-    yAxisLabel: 'Air Pressure',
-    xAxisUnits: isCompare ? 'From log start' : 'DateTime (IST)',
-    yAxisUnits: 'Pa',
-  };
-}
-
-// Collapsible left panels — collapsed by default
-const isFilterCollapsed = ref(true);
-const isLimitsCollapsed = ref(true);
-const isSavingPressureLimits = ref(false);
-const editableWarningLimit = ref(null);
-const editableCriticalLimit = ref(null);
+const dateRange = ref(buildDefaultDateRange());
 
 watch(
   [warningLimit, criticalLimit],
@@ -607,197 +63,310 @@ watch(
   { immediate: true },
 );
 
-function getRmseAlertStatus(item) {
-  if (!item || !item.active || item.isBaseline) {
-    return 'normal';
-  }
-  const status = String(item.status || '').toUpperCase();
-  if (status === 'CRITICAL') return 'critical';
-  if (status === 'WARNING') return 'warning';
-  if (status === 'OK') return 'normal';
-  if (item.rmse == null || isNaN(Number(item.rmse))) return 'normal';
+const limitsDirty = computed(() => {
+  const warn = editableWarningLimit.value;
+  const crit = editableCriticalLimit.value;
+  const sameWarn = warn == null && warningLimit.value == null
+    || Number(warn) === Number(warningLimit.value);
+  const sameCrit = crit == null && criticalLimit.value == null
+    || Number(crit) === Number(criticalLimit.value);
+  return !(sameWarn && sameCrit);
+});
+const canSaveLimits = computed(() => limitsDirty.value && !isSavingLimits.value);
 
-  const val = Number(item.rmse);
-  const crit = Number(criticalLimit.value);
-  const warn = Number(warningLimit.value);
-  if (Number.isFinite(crit) && crit > 0 && val >= crit) return 'critical';
-  if (Number.isFinite(warn) && warn > 0 && val >= warn) return 'warning';
-  return 'normal';
+const availableParameters = computed(() => store.availableParameters || []);
+const selectedParameter = computed({
+  get: () => store.selectedParameter,
+  set: (value) => { store.selectedParameter = value; },
+});
+const parameterMeta = computed(() => store.selectedParameterMeta);
+
+const logFiles = computed(() => store.logFiles || []);
+const comparisonSeries = computed(() => store.comparisonSeries || []);
+const selectedLogFileIds = computed(() => store.selectedLogFileIds || []);
+const baselineLogFileId = computed(() => store.baselineLogFileId);
+
+const displayComparisonSeries = computed(() => {
+  const raw = comparisonSeries.value || [];
+  return isBaselineVisible.value ? raw : raw.filter((s) => !s.baseline);
+});
+const hasChartSeries = computed(() => displayComparisonSeries.value.some((s) => Array.isArray(s.chart_data) && s.chart_data.length > 0));
+
+function formatProcessedDateOnly(value) {
+  if (value == null || value === '') return '';
+  const text = String(value).trim();
+  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (iso) return iso[1];
+  return text.split(/\s+/)[0] || text;
+}
+function formatProcessedTimeOnly(value) {
+  if (value == null || value === '') return '';
+  const text = String(value).trim();
+  const match = text.match(/(\d{1,2}:\d{2}:\d{2})/);
+  return match ? match[1] : '';
+}
+function toggleSort(col) {
+  if (sortColumn.value === col) sortOrder.value = sortOrder.value === 'asc' ? 'desc' : 'asc';
+  else { sortColumn.value = col; sortOrder.value = 'desc'; }
 }
 
-function formatRunStatusLabel(status) {
-  const normalized = String(status || '').toUpperCase();
-  if (normalized === 'CRITICAL') return 'CRITICAL';
-  if (normalized === 'WARNING') return 'WARNING';
-  if (normalized === 'OK') return 'OK';
-  return '—';
-}
-
-function getLogRowAlertStatus(row) {
-  if (!row || row.baseline) return 'normal';
-  const status = String(row.status || '').toUpperCase();
-  if (status === 'CRITICAL') return 'critical';
-  if (status === 'WARNING') return 'warning';
-  return 'normal';
-}
-
-// Expand/collapse row metrics details in timestamps list table
-const expandedRowId = ref(null);
-
-function toggleRowExpand(id) {
-  if (expandedRowId.value === id) {
-    expandedRowId.value = null;
-  } else {
-    expandedRowId.value = id;
-  }
-}
-
-function formatOneDecimal(val) {
-  if (val == null || val === undefined || isNaN(Number(val))) return '—';
-  return Number(val).toFixed(1);
-}
-
-async function savePressureLimits() {
-  isSavingPressureLimits.value = true;
-  try {
-    await machineSamplingWithLimitsStore.updatePressureLimits(
-      editableWarningLimit.value,
-      editableCriticalLimit.value,
-    );
-    await loadPressureLogFiles({ refreshGraph: false });
-    Toastify({
-      text: 'RMSE limits updated from pressure_monitoring_machine.',
-      duration: 3000,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#10b981',
-    }).showToast();
-  } catch (error) {
-    Toastify({
-      text: error.response?.data?.detail || 'Failed to update limits.',
-      duration: 5000,
-      close: true,
-      gravity: 'top',
-      position: 'right',
-      backgroundColor: '#ef4444',
-    }).showToast();
-  } finally {
-    isSavingPressureLimits.value = false;
-  }
-}
-
-// Active KPI cards (baseline + up to 5 runs).
-// Baseline: mean / peak / ripple / cycle duration. Runs: RMSE / status / cycle duration.
-const fourKpiSlots = computed(() => {
-  const slots = [];
-
-  const bId = baselineLogFileId.value;
-  const bRow = (bId != null && isBaselineVisible.value)
-    ? pressureLogFiles.value.find((r) => r.log_file_id === bId)
-    : null;
-
-  if (bRow) {
-    slots.push({
-      key: 'baseline',
-      active: true,
-      isBaseline: true,
-      badgeText: 'BASELINE',
-      timestamp: [formatProcessedDateOnly(bRow.time_stamp), formatProcessedTimeOnly(bRow.time_stamp)].filter(Boolean).join(' '),
-      mean: bRow.mean_pressure != null ? formatOneDecimal(bRow.mean_pressure) : null,
-      peak: bRow.peak_pressure != null ? formatOneDecimal(bRow.peak_pressure) : null,
-      ripple: bRow.pressure_ripple != null ? formatOneDecimal(bRow.pressure_ripple) : null,
-      duration: bRow.cycle_duration_seconds != null ? formatOneDecimal(bRow.cycle_duration_seconds) : null,
-      rmse: null,
-      status: null,
-      color: 'rgb(185, 28, 28)',
-    });
-  }
-
-  const nonBaselineColors = [
-    'rgb(37, 99, 235)',
-    'rgb(147, 51, 234)',
-    'rgb(219, 39, 119)',
-    'rgb(5, 150, 105)',
-    'rgb(234, 88, 12)',
-  ];
-
-  selectedPressureLogFileIds.value.forEach((selectedId, i) => {
-    if (selectedId == null || selectedId === bId) return;
-    const sRow = pressureLogFiles.value.find((r) => r.log_file_id === selectedId);
-    if (!sRow) return;
-    const color = nonBaselineColors[i % nonBaselineColors.length];
-    slots.push({
-      key: `run_${selectedId}`,
-      active: true,
-      isBaseline: false,
-      badgeText: `RUN #${i + 1}`,
-      timestamp: [formatProcessedDateOnly(sRow.time_stamp), formatProcessedTimeOnly(sRow.time_stamp)].filter(Boolean).join(' '),
-      mean: null,
-      peak: null,
-      ripple: null,
-      duration: sRow.cycle_duration_seconds != null ? formatOneDecimal(sRow.cycle_duration_seconds) : null,
-      rmse: sRow.rmse != null ? formatOneDecimal(sRow.rmse) : null,
-      status: sRow.status || 'OK',
-      color,
-    });
+const displayLogFiles = computed(() => {
+  let list = logFiles.value;
+  if (baselineLogFileId.value != null) list = list.filter((item) => item.log_file_id !== baselineLogFileId.value);
+  return [...list].sort((a, b) => {
+    const rawA = a.time_stamp || a.program_file_time || '';
+    const rawB = b.time_stamp || b.program_file_time || '';
+    if (sortColumn.value === 'date') {
+      const cmp = formatProcessedDateOnly(rawA).localeCompare(formatProcessedDateOnly(rawB));
+      return sortOrder.value === 'asc' ? cmp : -cmp;
+    }
+    const cmp = formatProcessedTimeOnly(rawA).localeCompare(formatProcessedTimeOnly(rawB));
+    return sortOrder.value === 'asc' ? cmp : -cmp;
   });
-
-  return slots;
 });
 
-function statusTagColor(status) {
-  const normalized = String(status || '').toUpperCase();
-  if (normalized === 'CRITICAL') return 'error';
-  if (normalized === 'WARNING') return 'warning';
-  if (normalized === 'OK') return 'success';
-  return 'default';
+const baselineLogFileLabel = computed(() => {
+  if (!baselineLogFileId.value) return 'None Selected';
+  const row = logFiles.value.find((item) => item.log_file_id === baselineLogFileId.value);
+  const raw = row?.time_stamp || row?.program_file_time;
+  if (!raw) return 'Baseline Active';
+  return [formatProcessedDateOnly(raw), formatProcessedTimeOnly(raw)].filter(Boolean).join(' ');
+});
+const canUpdateBaseline = computed(() => selectedLogFileIds.value.length === 1);
+const hasBaseline = computed(() => baselineLogFileId.value != null);
+const hasSelections = computed(() => selectedLogFileIds.value.length > 0);
+
+const maxSelectableDate = computed(() => {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+});
+const fromDateConfig = computed(() => ({
+  dateFormat: 'Y-m-d', altInput: true, altFormat: 'd-m-Y', allowInput: false, disableMobile: true,
+  maxDate: dateRange.value.endDate || maxSelectableDate.value,
+  onReady: (_d, _s, instance) => instance.calendarContainer.classList.add('pressure-fp-calendar'),
+}));
+const toDateConfig = computed(() => ({
+  dateFormat: 'Y-m-d', altInput: true, altFormat: 'd-m-Y', allowInput: false, disableMobile: true,
+  minDate: dateRange.value.startDate || undefined, maxDate: maxSelectableDate.value,
+  onReady: (_d, _s, instance) => instance.calendarContainer.classList.add('pressure-fp-calendar'),
+}));
+
+function resetHoverData() {
+  store.hoverData = {
+    xAxisLabel: 'Timestamp', xAxisValue: '', yAxisLabel: parameterMeta.value?.label || 'Vibration',
+    yAxisValue: '', xAxisUnits: 'DateTime', yAxisUnits: parameterMeta.value?.unit || '',
+  };
+}
+
+async function refreshGraph() {
+  if (selectedLogFileIds.value.length === 0 && !baselineLogFileId.value) {
+    store.comparisonSeries = [];
+    store.chartData = [[0, 0]];
+    store.chartFetchMessage = 'Choose one or more program files from the left panel to view the graph.';
+    resetHoverData();
+    return;
+  }
+  isGraphLoading.value = true;
+  try { await store.fetchComparison([...selectedLogFileIds.value], true); }
+  catch (error) {
+    Toastify({ text: error.response?.data?.detail || 'Failed to load vibration graph.', duration: 5000, close: true, gravity: 'top', position: 'right', backgroundColor: '#ef4444' }).showToast();
+  } finally { isGraphLoading.value = false; }
+}
+
+async function loadLogFiles({ refreshGraph: refresh = true } = {}) {
+  isLogListLoading.value = true;
+  try {
+    const response = await store.fetchLogFiles(dateRange.value.startDate, dateRange.value.endDate);
+    const files = response.log_files || [];
+    const validIds = new Set(files.map((item) => item.log_file_id));
+    const baseline = response.baseline_log_file_id ?? baselineLogFileId.value;
+    let selected = selectedLogFileIds.value.filter((id) => validIds.has(id) && id !== baseline).slice(0, MAX_SELECTIONS);
+    if (selected.length === 0) {
+      const latest = files.find((item) => item.log_file_id !== baseline && !item.baseline);
+      if (latest) selected = [latest.log_file_id];
+    }
+    store.selectedLogFileIds = selected;
+    if (refresh) await refreshGraph();
+  } catch (error) {
+    resetHoverData();
+    Toastify({ text: error.response?.data?.detail || 'Failed to load program files.', duration: 5000, close: true, gravity: 'top', position: 'right', backgroundColor: '#ef4444' }).showToast();
+  } finally { isLogListLoading.value = false; }
+}
+
+function isLogSelected(id) { return selectedLogFileIds.value.includes(id); }
+function canSelectLog(id) { return isLogSelected(id) || selectedLogFileIds.value.length < MAX_SELECTIONS; }
+function toggleLogSelection(id) {
+  if (id === baselineLogFileId.value) return;
+  const current = [...selectedLogFileIds.value];
+  const idx = current.indexOf(id);
+  if (idx >= 0) current.splice(idx, 1);
+  else {
+    if (current.length >= MAX_SELECTIONS) {
+      Toastify({ text: `Maximum of ${MAX_SELECTIONS} runs can be selected for preview.`, duration: 3000, close: true, gravity: 'top', position: 'right', backgroundColor: '#ef4444' }).showToast();
+      return;
+    }
+    current.push(id);
+  }
+  store.selectedLogFileIds = current;
+  refreshGraph();
+}
+function selectAllSelections() {
+  store.selectedLogFileIds = displayLogFiles.value.slice(0, MAX_SELECTIONS).map((i) => i.log_file_id);
+  refreshGraph();
+}
+async function clearAllSelections() {
+  if (!selectedLogFileIds.value.length) return;
+  store.selectedLogFileIds = [];
+  await refreshGraph();
+}
+async function resetFilter() {
+  dateRange.value = buildDefaultDateRange();
+  await loadLogFiles({ refreshGraph: true });
+}
+async function handleBaselineUpdate() {
+  if (!canUpdateBaseline.value) return;
+  isUpdatingBaseline.value = true;
+  try {
+    await store.updateBaseline(selectedLogFileIds.value[0]);
+    await loadLogFiles({ refreshGraph: false });
+    await refreshGraph();
+    Toastify({ text: 'Baseline updated successfully.', duration: 3000, close: true, gravity: 'top', position: 'right', backgroundColor: '#10b981' }).showToast();
+  } catch (error) {
+    Toastify({ text: error.response?.data?.detail || 'Failed to update baseline.', duration: 5000, close: true, gravity: 'top', position: 'right', backgroundColor: '#ef4444' }).showToast();
+  } finally { isUpdatingBaseline.value = false; }
+}
+async function handleBaselineClear() {
+  if (!hasBaseline.value) return;
+  isUpdatingBaseline.value = true;
+  try {
+    await store.clearBaseline();
+    await loadLogFiles({ refreshGraph: false });
+    await refreshGraph();
+    Toastify({ text: 'Baseline cleared.', duration: 3000, close: true, gravity: 'top', position: 'right', backgroundColor: '#10b981' }).showToast();
+  } catch (error) {
+    Toastify({ text: error.response?.data?.detail || 'Failed to clear baseline.', duration: 5000, close: true, gravity: 'top', position: 'right', backgroundColor: '#ef4444' }).showToast();
+  } finally { isUpdatingBaseline.value = false; }
+}
+async function saveVibrationLimits() {
+  isSavingLimits.value = true;
+  try {
+    await store.updateLimits(editableWarningLimit.value, editableCriticalLimit.value);
+    await refreshGraph();
+    Toastify({ text: 'Warning / critical limits saved.', duration: 3000, close: true, gravity: 'top', position: 'right', backgroundColor: '#10b981' }).showToast();
+  } catch (error) {
+    Toastify({ text: error.response?.data?.detail || 'Failed to save limits.', duration: 5000, close: true, gravity: 'top', position: 'right', backgroundColor: '#ef4444' }).showToast();
+  } finally {
+    isSavingLimits.value = false;
+  }
+}
+async function onParameterChange() {
+  store.persistSession();
+  await refreshGraph();
+}
+
+function OnHoverCallBack(hoverData) {
+  if (!hoverData?.length) return;
+  const preferred = hoverData.find((p) => p?.name && !String(p.name).includes('Limit') && p.yval != null) || hoverData[0];
+  store.hoverData = {
+    xAxisLabel: 'Timestamp',
+    xAxisValue: preferred.xval != null ? new Date(preferred.xval).toLocaleString('en-IN') : '',
+    yAxisLabel: parameterMeta.value?.label || 'Vibration',
+    yAxisValue: preferred.yval,
+    xAxisUnits: 'DateTime (IST)',
+    yAxisUnits: parameterMeta.value?.unit || '',
+  };
 }
 
 const handleBack = () => {
-  const previous = navigationHistoryStore.history.length
-    ? navigationHistoryStore.history[navigationHistoryStore.history.length - 1]
-    : null;
-
+  const previous = navigationHistoryStore.history.length ? navigationHistoryStore.history[navigationHistoryStore.history.length - 1] : null;
   const candidate = previous?.fullPath || previous?.path || '';
-  const isLoginLike = (
-    !candidate
-    || candidate === '/'
-    || candidate === '/#/'
-    || String(candidate).toLowerCase().includes('login')
-  );
-  const isSelf = candidate.includes('machine-level-sampling') || candidate.includes('air-pressure-sampling');
-
-  if (!isLoginLike && !isSelf) {
-    navigationHistoryStore.removeLastRoute();
-    router.push(candidate);
-    return;
-  }
-
+  const bad = !candidate || candidate === '/' || String(candidate).toLowerCase().includes('login') || candidate.includes('vibration-sampling');
+  if (!bad) { navigationHistoryStore.removeLastRoute(); router.push(candidate); return; }
   router.push('/managerialOverview');
 };
 
-onBeforeMount(() => {
-  if (!machineSamplingWithLimitsStore.lastSelectedParameter) {
-    machineSamplingWithLimitsStore.restoreSamplingSession();
+function toggleRowExpand(id) { expandedRowId.value = expandedRowId.value === id ? null : id; }
+function formatOneDecimal(val) {
+  if (val == null || isNaN(Number(val))) return '—';
+  return Number(val).toFixed(1);
+}
+
+function handleLogSelection(logFileId, checked) {
+  const current = [...selectedLogFileIds.value];
+  const idx = current.indexOf(logFileId);
+  if (checked) {
+    if (idx >= 0) return;
+    if (current.length >= MAX_SELECTIONS) {
+      Toastify({ text: `Maximum of ${MAX_SELECTIONS} runs can be selected for preview.`, duration: 3000, close: true, gravity: 'top', position: 'right', backgroundColor: '#ef4444' }).showToast();
+      return;
+    }
+    current.push(logFileId);
+  } else if (idx >= 0) {
+    current.splice(idx, 1);
   }
-  if (resolveIsPressure()) {
-    const hasDates = Number.isFinite(Number(machineSamplingWithLimitsStore.selectedDates.from))
-      && Number.isFinite(Number(machineSamplingWithLimitsStore.selectedDates.to))
-      && Number(machineSamplingWithLimitsStore.selectedDates.to) > Number(machineSamplingWithLimitsStore.selectedDates.from);
-    initializePressureDates({ forceRefreshDates: !hasDates });
-  }
+  store.selectedLogFileIds = current;
+  refreshGraph();
+}
+
+function handleRowClick(logFileId) {
+  if (logFileId === baselineLogFileId.value) return;
+  handleLogSelection(logFileId, !isLogSelected(logFileId));
+}
+
+const seriesLegend = computed(() => {
+  const palette = ['#0284c7', '#059669', '#d97706', '#7c3aed', '#db2777', '#0f766e'];
+  const paramLabel = parameterMeta.value?.label || 'Vibration';
+  const logsById = Object.fromEntries((logFiles.value || []).map((row) => [row.log_file_id, row]));
+  return displayComparisonSeries.value.map((series, index) => {
+    const logMeta = logsById[series.log_file_id] || {};
+    const rawTs = String(
+      series.time_stamp
+      || logMeta.time_stamp
+      || series.label
+      || series.file_name
+      || series.program_file_time
+      || series.log_file_id
+      || ''
+    )
+      .replace(/^Baseline\s*\(/i, '')
+      .replace(/\)$/, '')
+      .trim();
+    const cycle = series.cycle_duration_seconds ?? logMeta.cycle_duration_seconds;
+    return {
+      key: series.log_file_id ?? `series-${index}`,
+      timestamp: rawTs || '—',
+      parameterLabel: paramLabel,
+      cycleDuration: cycle != null && !Number.isNaN(Number(cycle)) ? formatOneDecimal(cycle) : null,
+      color: series.color || series.stroke || palette[index % palette.length],
+      baseline: !!series.baseline,
+    };
+  });
 });
 
+function paramSummaryValue(row, key) {
+  const summary = row?.param_summary || {};
+  const value = summary[key];
+  if (value == null || Number.isNaN(Number(value))) return '—';
+  return formatOneDecimal(value);
+}
+
+const paramSummaryItems = computed(() => {
+  const all = availableParameters.value?.length ? availableParameters.value : VIBRATION_PARAMETERS;
+  const byKey = Object.fromEntries(all.map((item) => [item.key, item]));
+  const orderedKeys = [
+    'v_peak_x', 'v_peak_y', 'v_peak_z', 'contact_temperature',
+    'v_rms_x', 'v_rms_y', 'v_rms_z',
+  ];
+  const ordered = orderedKeys.map((key) => byKey[key]).filter(Boolean);
+  const leftovers = all.filter((item) => !orderedKeys.includes(item.key));
+  return [...ordered, ...leftovers];
+});
+
+onBeforeMount(() => { if (!store.lastSelected) store.restoreSession(); });
 onMounted(async () => {
-  if (!machineSamplingWithLimitsStore.lastSelectedParameter) {
-    machineSamplingWithLimitsStore.restoreSamplingSession();
-  }
-  initializePressureDates();
-  initializePressureLogDateRange();
-  resetPressureHoverData();
-  // Prefer last 30 days; if empty, auto-clear filter and load all timestamps.
-  await loadPressureLogFiles({ refreshGraph: true, allowUnfilteredFallback: true });
+  if (!store.machine) store.restoreSession();
+  resetHoverData();
+  await loadLogFiles({ refreshGraph: true });
 });
 </script>
 
@@ -806,9 +375,9 @@ onMounted(async () => {
     <SectionMain class="mls-section-main">
 
       <!-- Alert Toast -->
-      <div v-if="machineSamplingWithLimitsStore.alertMessage"
-        :class="['mls-alert', machineSamplingWithLimitsStore.isSuccessMessage ? 'mls-alert--ok' : 'mls-alert--error']">
-        {{ machineSamplingWithLimitsStore.alertMessage }}
+      <div v-if="false"
+        :class="['mls-alert', false ? 'mls-alert--ok' : 'mls-alert--error']">
+        {{ false }}
       </div>
 
       <!-- ── TOP HEADER BANNER ── -->
@@ -826,27 +395,29 @@ onMounted(async () => {
           <div class="mls-breadcrumb-chips">
             <span class="mls-chip-line">LINE: {{ lineName }}</span>
             <span class="mls-chip-sep">&rsaquo;</span>
-            <span class="mls-chip-machine">MACHINE: {{ pressureMachineDisplayName }}</span>
+            <span class="mls-chip-machine">MACHINE: {{ vibrationMachineDisplayName }}</span>
             <span class="mls-chip-sep">&rsaquo;</span>
-            <span class="mls-chip-signal">SIGNAL: {{ pressureSignalDisplayName }}</span>
+            <span class="mls-chip-signal">PORT: {{ vibrationPortDisplayName }}</span>
           </div>
         </div>
 
         <!-- Parameter Card -->
         <div class="mls-top-card">
-          <span class="mls-top-card-label">PARAMETER</span>
-          <span class="mls-top-card-value">Air Pressure</span>
+          <span class="mls-top-card-label">PLOT PARAMETER</span>
+          <select v-model="selectedParameter" class="mls-top-card-select" @change="onParameterChange">
+            <option v-for="item in availableParameters" :key="item.key" :value="item.key">{{ item.label }}</option>
+          </select>
         </div>
 
         <!-- Warning Limit Card -->
         <div class="mls-top-card">
-          <span class="mls-top-card-label">WARNING LIMIT (RMSE)</span>
+          <span class="mls-top-card-label">WARNING LIMIT</span>
           <span class="mls-top-card-value mls-text-warn">{{ warningLimit ?? '—' }}</span>
         </div>
 
         <!-- Critical Limit Card -->
         <div class="mls-top-card">
-          <span class="mls-top-card-label">CRITICAL LIMIT (RMSE)</span>
+          <span class="mls-top-card-label">CRITICAL LIMIT</span>
           <span class="mls-top-card-value mls-text-crit">{{ criticalLimit ?? '—' }}</span>
         </div>
       </div>
@@ -893,28 +464,28 @@ onMounted(async () => {
                 <button
                   type="button"
                   class="mls-ctrl-btn mls-ctrl-btn--primary"
-                  :disabled="!canUpdateBaseline || isUpdatingPressureBaseline"
+                  :disabled="!canUpdateBaseline || isUpdatingBaseline"
                   title="Select 1 timestamp in the table below to update the baseline"
-                  @click="handlePressureBaselineUpdate"
+                  @click="handleBaselineUpdate"
                 >
                   Set Selected as Baseline
                 </button>
                 <button
                   type="button"
                   class="mls-ctrl-btn mls-ctrl-btn--ghost"
-                  :disabled="!hasBaseline || isUpdatingPressureBaseline"
-                  @click="handlePressureBaselineClear"
+                  :disabled="!hasBaseline || isUpdatingBaseline"
+                  @click="handleBaselineClear"
                 >
                   Clear
                 </button>
               </div>
             </div>
 
-            <!-- 2. RMSE ALERT LIMITS CARD (collapsed by default) -->
+            <!-- 2. ALERT LIMITS CARD (collapsed by default) -->
             <div class="mls-control-card">
               <div class="mls-card-title-bar mls-card-title-bar--clickable" @click="isLimitsCollapsed = !isLimitsCollapsed">
                 <div class="mls-card-title-left">
-                  <span class="mls-card-title-text">RMSE ALERT LIMITS</span>
+                  <span class="mls-card-title-text">ALERT LIMITS</span>
                 </div>
                 <button type="button" class="mls-toggle-btn" title="Toggle Limits Panel">
                   <span>{{ isLimitsCollapsed ? 'Expand' : 'Collapse' }}</span>
@@ -930,7 +501,7 @@ onMounted(async () => {
                     <input
                       v-model.number="editableWarningLimit"
                       type="number"
-                      step="1"
+                      step="0.1"
                       min="0"
                       class="mls-rmse-box-input mls-rmse-box-input--warn"
                       placeholder="Warning"
@@ -941,7 +512,7 @@ onMounted(async () => {
                     <input
                       v-model.number="editableCriticalLimit"
                       type="number"
-                      step="1"
+                      step="0.1"
                       min="0"
                       class="mls-rmse-box-input mls-rmse-box-input--crit"
                       placeholder="Critical"
@@ -952,10 +523,10 @@ onMounted(async () => {
                   <button
                     type="button"
                     class="mls-ctrl-btn mls-ctrl-btn--primary"
-                    :disabled="isSavingPressureLimits"
-                    @click="savePressureLimits"
+                    :disabled="!canSaveLimits"
+                    @click="saveVibrationLimits"
                   >
-                    {{ isSavingPressureLimits ? 'Saving...' : 'Save Limits' }}
+                    {{ isSavingLimits ? 'Saving...' : 'Save Limits' }}
                   </button>
                 </div>
               </div>
@@ -984,28 +555,28 @@ onMounted(async () => {
                     <span class="mls-date-prefix">FROM</span>
                     <span class="mls-field-divider" />
                     <flat-pickr
-                      v-model="pressureDateRange.startDate"
-                      :config="pressureFromDateConfig"
+                      v-model="dateRange.startDate"
+                      :config="fromDateConfig"
                       class="mls-date-input"
                       placeholder="dd-mm-yyyy"
                     />
-                    <button v-if="pressureDateRange.startDate" type="button" class="mls-date-clear" @click="clearPressureStartDate">×</button>
+                    <button v-if="dateRange.startDate" type="button" class="mls-date-clear" @click="dateRange.startDate = ''">×</button>
                   </div>
                   <div class="mls-date-field">
                     <span class="mls-date-prefix">TO</span>
                     <span class="mls-field-divider" />
                     <flat-pickr
-                      v-model="pressureDateRange.endDate"
-                      :config="pressureToDateConfig"
+                      v-model="dateRange.endDate"
+                      :config="toDateConfig"
                       class="mls-date-input"
                       placeholder="dd-mm-yyyy"
                     />
-                    <button v-if="pressureDateRange.endDate" type="button" class="mls-date-clear" @click="clearPressureEndDate">×</button>
+                    <button v-if="dateRange.endDate" type="button" class="mls-date-clear" @click="dateRange.endDate = ''">×</button>
                   </div>
                 </div>
                 <div class="mls-search-btn-row">
-                  <button type="button" class="mls-btn-filter" @click="loadPressureLogFiles()">Filter</button>
-                  <button type="button" class="mls-btn-reset" @click="resetPressureFilter()">Reset</button>
+                  <button type="button" class="mls-btn-filter" @click="loadLogFiles()">Filter</button>
+                  <button type="button" class="mls-btn-reset" @click="resetFilter()">Reset</button>
                 </div>
               </div>
             </div>
@@ -1016,14 +587,14 @@ onMounted(async () => {
           <div class="mls-table-control-bar">
             <span class="mls-table-control-title">
               TIMESTAMPS LIST
-              <span class="mls-select-count-badge">({{ selectedPressureLogFileIds.length }}/{{ MAX_PRESSURE_LOG_SELECTIONS }})</span>
+              <span class="mls-select-count-badge">({{ selectedLogFileIds.length }}/{{ MAX_SELECTIONS }})</span>
             </span>
             <div class="mls-table-control-actions">
               <button
                 type="button"
                 class="mls-link-action"
-                :disabled="!hasPressureSelections"
-                @click="clearAllPressureSelections"
+                :disabled="!hasSelections"
+                @click="clearAllSelections"
               >
                 Clear Selection
               </button>
@@ -1072,45 +643,36 @@ onMounted(async () => {
               </span>
             </div>
             <div class="mls-th mls-th-metrics">
-              <span>RMSE</span>
+              <span>LOG ID</span>
             </div>
           </div>
 
           <!-- Scrollable Table Body -->
           <div class="mls-table-body">
-            <div v-if="isPressureLogListLoading" class="mls-empty-state">Loading timestamps...</div>
-            <div v-else-if="displayPressureLogFiles.length === 0" class="mls-empty-state">No timestamps found for range.</div>
-            <template v-else v-for="row in displayPressureLogFiles" :key="row.log_file_id">
+            <div v-if="isLogListLoading" class="mls-empty-state">Loading timestamps...</div>
+            <div v-else-if="displayLogFiles.length === 0" class="mls-empty-state">No timestamps found for range.</div>
+            <template v-else v-for="row in displayLogFiles" :key="row.log_file_id">
               <div
                 class="mls-tr"
                 :class="{
-                  'mls-tr--selected': selectedPressureLogFileIds.includes(row.log_file_id),
+                  'mls-tr--selected': selectedLogFileIds.includes(row.log_file_id),
                   'mls-tr--expanded': expandedRowId === row.log_file_id
                 }"
                 @click="handleRowClick(row.log_file_id)"
               >
                 <div class="mls-td mls-td-chk" @click.stop>
                   <input
-                    :checked="selectedPressureLogFileIds.includes(row.log_file_id)"
-                    :disabled="!selectedPressureLogFileIds.includes(row.log_file_id) && selectedPressureLogFileIds.length >= MAX_PRESSURE_LOG_SELECTIONS"
+                    :checked="selectedLogFileIds.includes(row.log_file_id)"
+                    :disabled="!selectedLogFileIds.includes(row.log_file_id) && selectedLogFileIds.length >= MAX_SELECTIONS"
                     type="checkbox"
                     class="mls-checkbox"
-                    @change="handlePressureLogSelection(row.log_file_id, $event.target.checked)"
+                    @change="handleLogSelection(row.log_file_id, $event.target.checked)"
                   />
                 </div>
-                <div class="mls-td mls-td-date">{{ formatProcessedDateOnly(row.time_stamp || row.processed_time) }}</div>
-                <div class="mls-td mls-td-time">{{ formatProcessedTimeOnly(row.time_stamp || row.processed_time) }}</div>
-                <div class="mls-td mls-td-metrics" @click.stop="toggleRowExpand(row.log_file_id)" title="Click to view run metrics">
-                  <span
-                    class="mls-metrics-val"
-                    :class="{
-                      'mls-rmse-val--crit': getLogRowAlertStatus(row) === 'critical',
-                      'mls-rmse-val--warn': getLogRowAlertStatus(row) === 'warning',
-                      'text-emerald-600': getLogRowAlertStatus(row) === 'normal' && row.rmse != null,
-                    }"
-                  >
-                    {{ row.rmse != null ? formatOneDecimal(row.rmse) : '—' }}
-                  </span>
+                <div class="mls-td mls-td-date">{{ formatProcessedDateOnly(row.time_stamp || row.processed_time || row.program_file_time) }}</div>
+                <div class="mls-td mls-td-time">{{ formatProcessedTimeOnly(row.time_stamp || row.processed_time || row.program_file_time) }}</div>
+                <div class="mls-td mls-td-metrics" @click.stop="toggleRowExpand(row.log_file_id)" title="Click to view run details">
+                  <span class="mls-metrics-val">{{ row.log_file_id }}</span>
                   <button type="button" class="mls-row-expand-btn" :class="{ 'mls-row-expand-btn--open': expandedRowId === row.log_file_id }" title="View Run Details">
                     <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5 transition-transform" :class="{ 'rotate-180': expandedRowId === row.log_file_id }" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.2" d="M19 9l-7 7-7-7" />
@@ -1119,38 +681,16 @@ onMounted(async () => {
                 </div>
               </div>
 
-              <!-- Collapsible Row Metrics Drawer -->
               <div v-if="expandedRowId === row.log_file_id" class="mls-row-drawer" @click.stop>
-                <div class="mls-drawer-grid">
-                  <div class="mls-drawer-stat">
-                    <span class="mls-drawer-label">Mean</span>
-                    <span class="mls-drawer-val">{{ row.mean_pressure != null ? formatOneDecimal(row.mean_pressure) + ' Pa' : 'N/A' }}</span>
+                <div class="mls-drawer-note">Latest sample for this program file / port</div>
+                <div class="mls-drawer-grid mls-drawer-grid--params">
+                  <div v-for="item in paramSummaryItems" :key="item.key" class="mls-drawer-stat">
+                    <span class="mls-drawer-label">{{ item.label }}</span>
+                    <span class="mls-drawer-val">
+                      {{ paramSummaryValue(row, item.key) }}
+                      <span v-if="paramSummaryValue(row, item.key) !== '—'" class="mls-drawer-unit">{{ item.unit }}</span>
+                    </span>
                   </div>
-                  <div class="mls-drawer-stat">
-                    <span class="mls-drawer-label">Peak</span>
-                    <span class="mls-drawer-val text-amber-600">{{ row.peak_pressure != null ? formatOneDecimal(row.peak_pressure) + ' Pa' : 'N/A' }}</span>
-                  </div>
-                  <div class="mls-drawer-stat">
-                    <span class="mls-drawer-label">Ripple</span>
-                    <span class="mls-drawer-val text-purple-600">{{ row.pressure_ripple != null ? formatOneDecimal(row.pressure_ripple) + ' Pa' : 'N/A' }}</span>
-                  </div>
-                  <div class="mls-drawer-stat">
-                    <span class="mls-drawer-label">Status</span>
-                    <span class="mls-drawer-val" :class="{
-                      'text-red-600': getLogRowAlertStatus(row) === 'critical',
-                      'text-amber-600': getLogRowAlertStatus(row) === 'warning',
-                      'text-emerald-600': getLogRowAlertStatus(row) === 'normal',
-                    }">{{ formatRunStatusLabel(row.status) }}</span>
-                  </div>
-                  <div class="mls-drawer-stat">
-                    <span class="mls-drawer-label">Cycle Duration</span>
-                    <span class="mls-drawer-val text-blue-600">{{ row.cycle_duration_seconds != null ? formatOneDecimal(row.cycle_duration_seconds) + ' s' : 'N/A' }}</span>
-                  </div>
-                </div>
-                <div class="mls-drawer-footer" v-if="row.start_time || row.end_time">
-                  <span class="mls-drawer-time-range">
-                    Run Window: <strong>{{ row.start_time || '—' }}</strong> &rarr; <strong>{{ row.end_time || '—' }}</strong>
-                  </span>
                 </div>
               </div>
             </template>
@@ -1163,104 +703,56 @@ onMounted(async () => {
           <!-- ── GRAPH HEADER BAR ── -->
           <div class="mls-graph-head">
             <div class="mls-graph-head-left">
-              <h3 class="mls-graph-title">HONING MEASURING AIR PRESSURE</h3>
+              <h3 class="mls-graph-title">VIBRATION MONITORING</h3>
               <span class="mls-head-divider">|</span>
               <div class="mls-head-meta">
                 <div class="mls-breadcrumb-chips">
                   <span class="mls-chip-line">LINE: {{ lineName }}</span>
                   <span class="mls-chip-sep">&rsaquo;</span>
-                  <span class="mls-chip-machine">MACHINE: {{ pressureMachineDisplayName }}</span>
+                  <span class="mls-chip-machine">MACHINE: {{ vibrationMachineDisplayName }}</span>
                   <span class="mls-chip-sep">&rsaquo;</span>
-                  <span class="mls-chip-signal">SIGNAL: {{ pressureSignalDisplayName }}</span>
+                  <span class="mls-chip-signal">PORT: {{ vibrationPortDisplayName }}</span>
                 </div>
               </div>
             </div>
 
-            <!-- Graph Controls & Toggles -->
             <div class="mls-graph-head-right">
+              <div class="mls-param-select-wrap">
+                <span class="mls-param-select-label">PLOT PARAMETER</span>
+                <select v-model="selectedParameter" class="mls-param-select" @change="onParameterChange">
+                  <option v-for="item in availableParameters" :key="item.key" :value="item.key">
+                    {{ item.label }} ({{ item.unit }})
+                  </option>
+                </select>
+              </div>
             </div>
           </div>
 
-          <!-- ── KPI row: baseline (mean/peak/ripple/duration) + runs (RMSE/status/duration) ── -->
-          <div v-if="fourKpiSlots.length" class="mls-metrics-summary-bar">
+          <div v-if="seriesLegend.length" class="mls-metrics-summary-bar">
             <div
-              v-for="item in fourKpiSlots"
+              v-for="item in seriesLegend"
               :key="item.key"
               class="mls-metric-card"
-              :class="{
-                'mls-metric-card--baseline': item.isBaseline,
-                'mls-metric-card--rmse-warn': getRmseAlertStatus(item) === 'warning',
-                'mls-metric-card--rmse-crit': getRmseAlertStatus(item) === 'critical',
-              }"
-              :style="{
-                borderColor: getRmseAlertStatus(item) === 'critical'
-                  ? '#dc2626'
-                  : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color)
-              }"
+              :class="{ 'mls-metric-card--baseline': item.baseline }"
+              :style="{ borderColor: item.color }"
             >
               <div class="mls-metric-card-header">
                 <div class="mls-metric-title-group">
-                  <span
-                    class="mls-metric-indicator"
-                    :style="{ background: getRmseAlertStatus(item) === 'critical' ? '#dc2626' : (getRmseAlertStatus(item) === 'warning' ? '#d97706' : item.color) }"
-                  />
-                  <span class="mls-metric-badge-text">{{ item.badgeText }}</span>
+                  <span class="mls-metric-indicator" :style="{ background: item.color }" />
+                  <span class="mls-metric-badge-text">{{ item.baseline ? 'BASELINE' : 'RUN' }}</span>
                 </div>
-                <span class="mls-metric-ts">{{ item.timestamp }}</span>
+                <span class="mls-metric-ts" :title="item.timestamp">{{ item.timestamp }}</span>
               </div>
-
-              <!-- Baseline: mean, peak, ripple, cycle duration -->
-              <div v-if="item.isBaseline" class="mls-metric-card-grid mls-metric-card-grid--baseline">
+              <div class="mls-metric-card-grid mls-metric-card-grid--run">
                 <div class="mls-metric-stat">
-                  <span class="mls-metric-label">MEAN</span>
-                  <span class="mls-metric-val">{{ item.mean != null ? item.mean : '—' }}</span>
-                </div>
-                <div class="mls-metric-stat">
-                  <span class="mls-metric-label">PEAK</span>
-                  <span class="mls-metric-val mls-metric-val--peak">{{ item.peak != null ? item.peak : '—' }}</span>
-                </div>
-                <div class="mls-metric-stat">
-                  <span class="mls-metric-label">RIPPLE</span>
-                  <span class="mls-metric-val mls-metric-val--ripple">{{ item.ripple != null ? item.ripple : '—' }}</span>
+                  <span class="mls-metric-label">PARAM</span>
+                  <span class="mls-metric-val">{{ item.parameterLabel }}</span>
                 </div>
                 <div class="mls-metric-stat">
                   <span class="mls-metric-label">CYCLE</span>
-                  <span class="mls-metric-val mls-metric-val--cycle">{{ item.duration != null ? `${item.duration}s` : '—' }}</span>
-                </div>
-              </div>
-
-              <!-- Runs: RMSE, status, cycle duration -->
-              <div v-else class="mls-metric-card-grid mls-metric-card-grid--run">
-                <div
-                  class="mls-metric-stat"
-                  :class="{ 'mls-stat--rmse-alert': getRmseAlertStatus(item) !== 'normal' }"
-                >
-                  <span class="mls-metric-label" :class="{
-                    'text-red-700 font-extrabold': getRmseAlertStatus(item) === 'critical',
-                    'text-amber-700 font-extrabold': getRmseAlertStatus(item) === 'warning',
-                  }">RMSE</span>
-                  <span class="mls-metric-val" :class="{
-                    'mls-rmse-val--crit': getRmseAlertStatus(item) === 'critical',
-                    'mls-rmse-val--warn': getRmseAlertStatus(item) === 'warning',
-                    'text-emerald-600': item.rmse != null && getRmseAlertStatus(item) === 'normal',
-                  }">
-                    {{ item.rmse != null ? item.rmse : '—' }}
+                  <span class="mls-metric-val mls-metric-val--cycle">
+                    {{ item.cycleDuration != null ? `${item.cycleDuration}s` : '—' }}
                   </span>
-                </div>
-                <div class="mls-metric-stat mls-metric-stat--status">
-                  <span class="mls-metric-label">STATUS</span>
-                  <a-tag
-                    v-if="item.status"
-                    class="mls-status-tag"
-                    :color="statusTagColor(item.status)"
-                  >
-                    {{ formatRunStatusLabel(item.status) }}
-                  </a-tag>
-                  <span v-else class="mls-metric-val">—</span>
-                </div>
-                <div class="mls-metric-stat">
-                  <span class="mls-metric-label">CYCLE</span>
-                  <span class="mls-metric-val mls-metric-val--cycle">{{ item.duration != null ? `${item.duration}s` : '—' }}</span>
                 </div>
               </div>
             </div>
@@ -1271,27 +763,29 @@ onMounted(async () => {
 
           <!-- ── GRAPH BODY CONTAINER ── -->
           <div class="mls-graph-body">
-            <div v-if="isPressureGraphLoading" class="mls-graph-placeholder">
+            <div v-if="isGraphLoading" class="mls-graph-placeholder">
               <span class="mls-placeholder-dot" />
-              Loading pressure comparison graph...
+              Loading vibration comparison graph...
             </div>
-            <div v-else-if="!pressureHasChartSeries" class="mls-graph-placeholder mls-graph-placeholder--empty">
+            <div v-else-if="!hasChartSeries" class="mls-graph-placeholder mls-graph-placeholder--empty">
               <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-10 h-10 text-slate-400 mb-2">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M3 13.125C3 12.504 3.504 12 4.125 12h2.25c.621 0 1.125.504 1.125 1.125v6.75C7.5 20.496 6.996 21 6.375 21h-2.25A1.125 1.125 0 013 19.875v-6.75zM9.75 8.625c0-.621.504-1.125 1.125-1.125h2.25c.621 0 1.125.504 1.125 1.125v11.25c0 .621-.504 1.125-1.125 1.125h-2.25a1.125 1.125 0 01-1.125-1.125V8.625zM16.5 4.125c0-.621.504-1.125 1.125-1.125h2.25C20.496 3 21 3.504 21 4.125v15.75c0 .621-.504 1.125-1.125 1.125h-2.25A1.125 1.125 0 0116.5 19.875V4.125z" />
               </svg>
-              <span>{{ machineSamplingWithLimitsStore.chartFetchMessage || 'Select timestamps from the left panel to view graph.' }}</span>
+              <span>{{ store.chartFetchMessage || 'Select program files from the left panel to view graph.' }}</span>
             </div>
             <div v-else class="mls-graph-canvas-box">
               <DyLineChartWithLimits
                 :data="chartData"
-                :series-data="displayPressureComparisonSeries"
+                :series-data="displayComparisonSeries"
                 :external-legend="[]"
                 :warningLimit="warningLimit"
                 :criticalLimit="criticalLimit"
                 :step-plot="false"
                 :hide-hints="false"
                 :borderless="true"
-                :show-limits="false"
+                :show-limits="true"
+                :y-axis-label="`${parameterMeta?.label || 'Vibration'} (${parameterMeta?.unit || ''})`.replace(' ()', '')"
+                :y-axis-unit="parameterMeta?.unit || ''"
                 @data-hovered="OnHoverCallBack"
               />
             </div>
@@ -1305,6 +799,54 @@ onMounted(async () => {
 
 <style scoped>
 @import url('https://fonts.googleapis.com/css2?family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600;700&display=swap');
+
+.mls-top-card-select {
+  width: 100%;
+  margin-top: 2px;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #94a3b8;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font-size: 12px;
+  font-weight: 700;
+  min-width: 160px;
+  cursor: pointer;
+}
+
+.mls-param-select-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  min-width: 220px;
+}
+
+.mls-param-select-label {
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.mls-param-select {
+  width: 100%;
+  background: #ffffff;
+  color: #0f172a;
+  border: 1px solid #0284c7;
+  border-radius: 6px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 1px 2px rgba(2, 132, 199, 0.15);
+}
+
+.mls-param-select:focus {
+  outline: 2px solid rgba(2, 132, 199, 0.35);
+  outline-offset: 1px;
+}
 
 /* ── Custom Light Scrollbar Theme ── */
 :deep(*::-webkit-scrollbar) {
@@ -1370,8 +912,8 @@ onMounted(async () => {
   background: #ffffff;
   box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.04);
   flex-shrink: 0;
-  height: 52px;
-  min-height: 52px;
+  height: 58px;
+  min-height: 58px;
 }
 
 .mls-back-button {
@@ -1492,7 +1034,7 @@ onMounted(async () => {
   gap: 0;
   flex: 1;
   min-height: 0;
-  height: calc(100vh - 108px);
+  height: calc(100vh - 114px);
   background: #f8fafc;
 }
 
@@ -2245,8 +1787,54 @@ onMounted(async () => {
   gap: 6px 12px;
 }
 
+.mls-drawer-grid--params {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.mls-drawer-grid--params .mls-drawer-label {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: unset;
+}
+
+.mls-drawer-grid--params .mls-drawer-stat {
+  min-width: 0;
+}
+
+.mls-drawer-note {
+  grid-column: 1 / -1;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #64748b;
+  margin-bottom: 6px;
+}
+
+.mls-drawer-unit {
+  margin-left: 2px;
+  font-size: 9px;
+  font-weight: 600;
+  color: #64748b;
+}
+
+.mls-vib-limits-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 8px;
+  align-items: end;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px dashed #e2e8f0;
+}
+
+.mls-vib-limits-save {
+  min-width: 64px;
+  height: 34px;
+}
+
 @media (min-width: 360px) {
-  .mls-drawer-grid {
+  .mls-drawer-grid:not(.mls-drawer-grid--params) {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
@@ -2356,9 +1944,9 @@ onMounted(async () => {
 
 .mls-metric-card-header {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
-  gap: 4px;
+  gap: 8px;
   margin-bottom: 6px;
   padding-bottom: 4px;
   border-bottom: 1px dashed #e2e8f0;
@@ -2395,10 +1983,22 @@ onMounted(async () => {
   font-size: 9px;
   font-weight: 600;
   color: #64748b;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 55%;
+  white-space: normal;
+  overflow: visible;
+  text-overflow: unset;
+  max-width: 100%;
+  line-height: 1.25;
+  text-align: right;
+  word-break: break-word;
+}
+
+.mls-metric-card-param {
+  margin-top: 6px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #0284c7;
 }
 
 .mls-metric-card--inactive .mls-metric-ts {
@@ -2417,7 +2017,19 @@ onMounted(async () => {
 }
 
 .mls-metric-card-grid--run {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 0.7fr);
+  align-items: start;
+}
+
+.mls-metric-card-grid--run .mls-metric-val {
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: unset;
+  word-break: normal;
+}
+
+.mls-metric-card-grid--run .mls-metric-stat:first-child {
+  min-width: max-content;
 }
 
 .mls-metric-stat {
@@ -2426,6 +2038,10 @@ onMounted(async () => {
   padding: 0 6px;
   border-right: 1px solid #e2e8f0;
   min-width: 0;
+}
+
+.mls-metric-card-grid--run .mls-metric-stat {
+  min-width: max-content;
 }
 
 .mls-metric-card-grid--run .mls-metric-stat,

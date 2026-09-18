@@ -34,6 +34,17 @@ export const PRESSURE_FALLBACK_MAX_SECONDS = 365 * 24 * 3600;
 
 const SAMPLING_SESSION_KEY = 'machineSamplingWithLimitsSession';
 
+function isRequestCanceled(error) {
+  return (
+    error?.code === 'ERR_CANCELED'
+    || error?.name === 'CanceledError'
+    || error?.name === 'AbortError'
+    || error?.message === 'canceled'
+  );
+}
+
+let pressureComparisonAbortController = null;
+
 export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWithLimits', {
   state: () => ({
     machine: 'T_H_OP150',
@@ -280,17 +291,30 @@ export const useMachineSamplingWithLimitsStore = defineStore('machineSamplingWit
 
       const url = `/pressure/machines/${encodeURIComponent(this.machine)}/air-pressure-log-files?${query.toString()}`;
 
+      if (pressureComparisonAbortController) {
+        pressureComparisonAbortController.abort();
+      }
+      const controller = new AbortController();
+      pressureComparisonAbortController = controller;
+
       try {
-        const response = await backendApi.get(url);
+        const response = await backendApi.get(url, { signal: controller.signal });
         this.applyPressureComparisonResponse(response.data);
         this.chartFetchMessage = response.data.message || '';
         return response.data;
       } catch (error) {
+        if (isRequestCanceled(error)) {
+          return null;
+        }
         console.error('Error fetching pressure comparison data:', error);
         this.chartData = [[0, 0]];
         this.pressureComparisonSeries = [];
         this.chartFetchMessage = error.response?.data?.detail || 'Fetching pressure comparison data failed.';
         throw error;
+      } finally {
+        if (pressureComparisonAbortController === controller) {
+          pressureComparisonAbortController = null;
+        }
       }
     },
     async updatePressureBaseline(logFileId) {

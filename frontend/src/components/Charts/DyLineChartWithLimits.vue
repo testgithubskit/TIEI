@@ -71,6 +71,16 @@ const props = defineProps({
     type: Boolean,
     default: true,
   },
+  /** Left-side Y axis caption (pressure compare UI). */
+  yAxisLabel: {
+    type: String,
+    default: 'Pressure (Pa)',
+  },
+  /** Unit suffix used in hover tooltip / value formatter. */
+  yAxisUnit: {
+    type: String,
+    default: 'Pa',
+  },
 });
 
 const isTimeSeries = computed(() => !props.stepPlot);
@@ -315,30 +325,75 @@ function getFullYRange() {
     }
   });
 
+  if (props.showLimits) {
+    [props.warningLimit, props.criticalLimit].forEach((limit) => {
+      if (limit == null || Number.isNaN(Number(limit))) return;
+      const num = Number(limit);
+      if (num < minY) minY = num;
+      if (num > maxY) maxY = num;
+    });
+  }
+
   if (!Number.isFinite(minY) || !Number.isFinite(maxY)) {
     return null;
   }
-  // Keep Y ticks on clean 100 Pa steps (e.g. 1000, 1100, 1200...).
-  let minBound = Math.floor(minY / 100) * 100;
-  let maxBound = Math.ceil(maxY / 100) * 100;
+
+  const span = Math.max(maxY - minY, Math.abs(maxY) * 0.05, 0.1);
+  const step = niceYStep(span);
+  let minBound = Math.floor(minY / step) * step;
+  let maxBound = Math.ceil(maxY / step) * step;
   if (maxBound <= minBound) {
-    maxBound = minBound + 100;
+    maxBound = minBound + step;
   }
-  return [minBound, maxBound];
+  return [Number(minBound.toFixed(8)), Number(maxBound.toFixed(8))];
 }
 
-function pressureYTicker(min, max) {
+function niceYStep(span) {
+  if (!Number.isFinite(span) || span <= 0) return 1;
+  const rough = span / 5;
+  const pow = 10 ** Math.floor(Math.log10(rough));
+  const normalized = rough / pow;
+  let nice;
+  if (normalized <= 1) nice = 1;
+  else if (normalized <= 2) nice = 2;
+  else if (normalized <= 5) nice = 5;
+  else nice = 10;
+  return nice * pow;
+}
+
+function formatYAxisLabel(value) {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '';
+  const abs = Math.abs(num);
+  if (abs >= 100) return String(Math.round(num));
+  if (abs >= 10) return String(Math.round(num * 10) / 10);
+  if (abs >= 1) return String(Math.round(num * 100) / 100);
+  return String(Math.round(num * 1000) / 1000);
+}
+
+function formatYHoverValue(value) {
+  const formatted = formatYAxisLabel(value);
+  const unit = String(props.yAxisUnit || '').trim();
+  return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function pressureYTicker(min, max, pixels) {
   const ticks = [];
   if (!Number.isFinite(min) || !Number.isFinite(max) || max <= min) {
-    return [{ v: min, label: String(Math.round(min || 0)) }];
+    return [{ v: min || 0, label: formatYAxisLabel(min || 0) }];
   }
-  const start = Math.ceil(min / 100) * 100;
-  for (let value = start; value <= max + 0.001; value += 100) {
-    ticks.push({ v: value, label: String(value) });
+  const span = max - min;
+  const targetMax = Math.max(4, Math.min(8, Math.floor((pixels || 280) / 36)));
+  let usedStep = niceYStep(span);
+  if (span / usedStep > targetMax + 2) {
+    usedStep = niceYStep(span / Math.max(targetMax - 1, 1));
+  }
+  for (let value = Math.ceil(min / usedStep) * usedStep; value <= max + usedStep * 0.001; value += usedStep) {
+    ticks.push({ v: Number(value.toFixed(8)), label: formatYAxisLabel(value) });
   }
   if (!ticks.length) {
-    ticks.push({ v: min, label: String(Math.round(min)) });
-    ticks.push({ v: max, label: String(Math.round(max)) });
+    ticks.push({ v: min, label: formatYAxisLabel(min) });
+    ticks.push({ v: max, label: formatYAxisLabel(max) });
   }
   return ticks;
 }
@@ -680,8 +735,8 @@ function buildOptions() {
         drawGrid: true,
         pixelsPerLabel: 36,
         ...(yRange ? { valueRange: yRange, independentTicks: true, ticker: pressureYTicker } : {}),
-        axisLabelFormatter: (y) => String(Math.round(y)),
-        valueFormatter: (y) => `${Math.round(y * 100) / 100} Pa`,
+        axisLabelFormatter: (y) => formatYAxisLabel(y),
+        valueFormatter: (y) => formatYHoverValue(y),
       },
     },
   };
@@ -721,7 +776,7 @@ function handleHover(event, x, points) {
       }
       return {
         label: point.name,
-        value: `${Math.round(Number(point.yval) * 100) / 100} Pa`,
+        value: formatYHoverValue(point.yval),
         color: seriesColor,
       };
     });
@@ -1045,7 +1100,7 @@ onBeforeUnmount(() => {
 
     <div class="dygraph-chart-body">
       <div class="dygraph-y-label">
-        Pressure (Pa)
+        {{ yAxisLabel }}
       </div>
       <div
         ref="plotArea"

@@ -507,11 +507,15 @@
           
           <!-- Modal Header -->
           <div class="noc-modal-header flex items-stretch justify-between border-b py-2.5 px-4">
-            <div class="flex flex-col justify-center">
-              <h2 class="text-base font-mono uppercase tracking-wider noc-mch-title flex items-center gap-2">
+            <div class="flex flex-col justify-center gap-1">
+              <h2 class="text-base font-mono uppercase tracking-wider noc-mch-title flex items-center gap-2 flex-wrap">
                 <span class="noc-line-name-txt">{{ selectedMachine.lineName }}</span>
                 <span class="noc-sep-txt">&gt;</span>
                 <span class="noc-mch-name-txt">{{ formatMachineName(selectedMachine.machine_name) }}</span>
+                <template v-if="selectedMachine.machine_state">
+                  <span class="noc-sep-txt">&gt;</span>
+                  <span class="noc-line-name-txt">{{ selectedMachine.machine_state }}</span>
+                </template>
               </h2>
             </div>
             <button @click="selectedMachine = null" class="noc-modal-close-btn flex items-center justify-center p-2 self-center transition-colors duration-150">
@@ -524,8 +528,32 @@
           <!-- Modal Body Content -->
           <div class="flex-1 overflow-y-auto p-4 pb-12 space-y-4 noc-modal-body">
             
+            <!-- Vibration ports: compact boxes -->
+            <div v-if="isSelectedVibrationMachine" class="space-y-3">
+              <div class="text-[9px] font-black uppercase tracking-wider mb-2 noc-abnormalities-header">
+                SELECT PORT
+              </div>
+              <div class="noc-vib-port-grid">
+                <button
+                  v-for="param in selectedVibrationPorts"
+                  :key="`${param.source_machine_name || selectedMachine.machine_name}-${param.port_name || param.display_name || param.internal_parameter_name}`"
+                  type="button"
+                  class="noc-vib-port-box"
+                  @click="openSelectedMachineParameter(param)"
+                >
+                  <span class="noc-vib-port-box-name">
+                    {{ param.port_name || param.signal_name || param.display_name || 'PORT' }}
+                  </span>
+                  <span class="noc-vib-port-box-hint">Open sampling</span>
+                </button>
+              </div>
+              <div v-if="selectedVibrationPorts.length === 0" class="text-center text-[10px] text-slate-400 uppercase py-6">
+                No ports configured for this machine
+              </div>
+            </div>
+
             <!-- Disconnected Status -->
-            <div v-if="isSelectedMachineDisconnected" class="flex flex-col items-center justify-center py-10 px-4 text-center noc-nominal-state">
+            <div v-else-if="isSelectedMachineDisconnected" class="flex flex-col items-center justify-center py-10 px-4 text-center noc-nominal-state">
               <div class="noc-nominal-icon-container p-3.5 mb-4 border flex items-center justify-center noc-disconnected-icon">
                 <svg class="w-6 h-6 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.5">
                   <path stroke-linecap="round" stroke-linejoin="round" d="M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636"/>
@@ -677,6 +705,7 @@ import cmtiLogoWhite from '@/assets/shopfloor/cmti_logo white.png';
 import { useFactoryOverviewStore } from '../stores/FactoryOverviewStore';
 import { useFactoryPollOverviewStore } from '../stores/FactoryPollGridStore';
 import { useMachineSamplingWithLimitsStore } from '@/stores/MachineSamplingWithLimitsStore'; 
+import { useVibrationSamplingStore } from '@/stores/VibrationSamplingStore';
 import { useSpecialPurposeMachineDetailStore } from '@/stores/SpecialPurposeMachineDetailStore';
 import { useSpecialPurposeMachinePositionStore } from '@/stores/SpecialPurposeMachinePositionStore';
 import { useNavigationHistoryStore } from '../stores/navigationHistoryStore';
@@ -811,6 +840,7 @@ const router = useRouter();
 const factoryStore = useFactoryOverviewStore();
 const factoryPollStore = useFactoryPollOverviewStore();
 const machineSamplingWithLimitsStore = useMachineSamplingWithLimitsStore();
+const vibrationSamplingStore = useVibrationSamplingStore();
 const specialPurposeMachineDetailStore = useSpecialPurposeMachineDetailStore();
 const specialPurposeMachinePositionStore = useSpecialPurposeMachinePositionStore();
 const navigationHistoryStore = useNavigationHistoryStore();
@@ -1627,6 +1657,22 @@ function openSpmDetail(machineName, parameterName = null) {
 function openSelectedMachineParameter(param) {
   const machine = selectedMachine.value;
   if (!machine || !param) return;
+
+  const isVibration = (
+    isVibrationMachine(machine)
+    || param?.is_vibration_machine === true
+    || param?.parameter_group === 'VIBRATION'
+    || !!param?.port_name
+  );
+  if (isVibration) {
+    logParameterDetails(
+      { ...param, is_vibration_machine: true, parameter_group: 'VIBRATION' },
+      param.source_machine_name || machine.machine_name,
+      'VIBRATION'
+    );
+    return;
+  }
+
   if (isSpecialPurposeMachine(machine)) {
     openSpmDetail(machine.machine_name, resolveSpmParameterName(param));
     return;
@@ -1659,9 +1705,72 @@ function getAbnormalParameters(machine) {
 }
 
 // ── Modal computed ──
+const VIBRATION_MACHINE_NAMES = new Set(['T_C_OP200', 'T_H_OP280']);
+const VIBRATION_PORTS_BY_MACHINE = {
+  T_C_OP200: ['MOTOR', 'BLOWER'],
+  T_H_OP280: ['MOTOR', 'JET PUMP'],
+};
+
+function isVibrationMachine(machine) {
+  if (!machine) return false;
+  if (machine.is_combined_vibration || machine.is_vibration_machine) return true;
+  if (VIBRATION_MACHINE_NAMES.has(machine.machine_name)) return true;
+  return (machine.parameters || []).some((param) => (
+    param?.is_vibration_machine === true
+    || param?.parameter_group === 'VIBRATION'
+    || !!param?.port_name
+  ));
+}
+
+function buildVibrationPortParam(machine, portName) {
+  return {
+    actual_parameter_name: 'VIBRATION',
+    display_name: portName,
+    internal_parameter_name: `vibration_${machine.machine_name}_${portName}`.replace(/\s+/g, '_'),
+    parameter_state: 'OK',
+    parameter_group: 'VIBRATION',
+    parameter_type: 'increasing',
+    is_vibration_machine: true,
+    port_name: portName,
+    signal_name: portName,
+    source_machine_name: machine.machine_name,
+    warning_limit: machine.warning_limit ?? null,
+    critical_limit: machine.critical_limit ?? null,
+  };
+}
+
+const isSelectedVibrationMachine = computed(() => isVibrationMachine(selectedMachine.value));
+
+const selectedVibrationPorts = computed(() => {
+  const machine = selectedMachine.value;
+  if (!isVibrationMachine(machine)) return [];
+
+  const fromParams = (machine.parameters || []).filter((param) => (
+    param?.is_vibration_machine === true
+    || param?.parameter_group === 'VIBRATION'
+    || !!param?.port_name
+  )).map((param) => ({
+    ...param,
+    port_name: param.port_name || param.signal_name || param.display_name,
+    signal_name: param.signal_name || param.port_name || param.display_name,
+    source_machine_name: param.source_machine_name || machine.machine_name,
+    is_vibration_machine: true,
+    parameter_group: 'VIBRATION',
+  }));
+
+  if (fromParams.length > 0) return fromParams;
+
+  const fallbackPorts = machine.ports?.length
+    ? machine.ports
+    : (VIBRATION_PORTS_BY_MACHINE[machine.machine_name] || []);
+  return fallbackPorts.map((port) => buildVibrationPortParam(machine, port));
+});
+
 const isSelectedMachineDisconnected = computed(() => {
   const machine = selectedMachine.value;
   if (!machine) return false;
+  // Vibration machines always expose ports — never treat as a dead-end disconnected modal.
+  if (isVibrationMachine(machine)) return false;
   if (machine.machine_state === 'DISCONNECTED') return true;
   const params = machine.parameters || [];
   return params.length > 0 && params.every((param) => param.parameter_state === 'DISCONNECTED');
@@ -1673,10 +1782,18 @@ const selectedMachineAlerts = computed(() => {
   if (selectedMachine.value.is_combined_air_honing) {
     return selectedMachine.value.parameters || [];
   }
+  if (isVibrationMachine(selectedMachine.value)) {
+    return selectedVibrationPorts.value;
+  }
   return (selectedMachine.value.parameters || []).filter(p => p.parameter_state !== 'OK');
 });
 
 function showMachineDetails(machine) {
+  if (isVibrationMachine(machine)) {
+    selectedMachine.value = machine;
+    return;
+  }
+
   if (machine.machine_state === 'DISCONNECTED') {
     selectedMachine.value = machine;
     return;
@@ -1749,6 +1866,30 @@ function logParameterDetails(param, machineName, parameterGroup, isPressureMachi
     || (isSpecialPurposeMachine(machineName) ? machineName : null);
   if (spmMachineName) {
     openSpmDetail(spmMachineName, resolveSpmParameterName(param));
+    return;
+  }
+
+  const isVibration = (
+    param?.is_vibration_machine === true
+    || param?.parameter_group === 'VIBRATION'
+    || parameterGroup === 'VIBRATION'
+    || !!param?.port_name
+  );
+
+  if (isVibration) {
+    const portName = param.port_name || param.signal_name || param.display_name || '';
+    const machineRef = selectedMachine.value || {};
+    vibrationSamplingStore.setContext({
+      machine: param.source_machine_name || machineName,
+      port: portName,
+      lineName: machineRef.lineName || machineRef.line_name || '',
+      selectedParameter: 'v_rms_x',
+      warningLimit: param.warning_limit ?? machineRef.warning_limit ?? null,
+      criticalLimit: param.critical_limit ?? machineRef.critical_limit ?? null,
+    });
+    navigationHistoryStore.addToHistory(router.currentRoute.value);
+    selectedMachine.value = null;
+    router.push('/vibration-sampling');
     return;
   }
 
@@ -2684,6 +2825,75 @@ onBeforeUnmount(() => {
   box-shadow: none !important;
   cursor: pointer;
 }
+
+.noc-modal-machine-status {
+  display: inline-flex;
+  align-items: center;
+  margin-left: 6px;
+  padding: 2px 8px;
+  border: 1px solid currentColor;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  line-height: 1.2;
+}
+.noc-modal-machine-status--ok { color: #4ade80; }
+.noc-modal-machine-status--warning { color: #fbbf24; }
+.noc-modal-machine-status--critical { color: #f87171; }
+.noc-modal-machine-status--disconnected { color: #94a3b8; }
+
+.noc-vib-port-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.noc-vib-port-box {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  min-height: 56px;
+  padding: 10px 12px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-left: 4px solid #4ade80;
+  background: rgba(15, 23, 42, 0.35);
+  cursor: pointer;
+  transition: border-color 0.15s ease, background 0.15s ease;
+  text-align: left;
+}
+.noc-vib-port-box:hover {
+  border-color: #38bdf8;
+  background: rgba(14, 165, 233, 0.08);
+}
+.noc-vib-port-box-name {
+  font-size: 12px;
+  font-weight: 900;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  color: #f8fafc;
+}
+.noc-vib-port-box-hint {
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #38bdf8;
+}
+.noc-dark-modal .noc-vib-port-box-name {
+  color: #f8fafc !important;
+}
+.noc-dark-modal .noc-vib-port-box-hint {
+  color: #38bdf8 !important;
+}
+.noc-light-modal .noc-vib-port-box {
+  background: #f8fafc;
+  border-color: #cbd5e1;
+  border-left-color: #22c55e;
+}
+.noc-light-modal .noc-vib-port-box-name { color: #0f172a !important; }
+.noc-light-modal .noc-vib-port-box-hint { color: #0284c7 !important; }
 
 /* Empty State / Nominal State Box */
 .noc-nominal-icon-container {

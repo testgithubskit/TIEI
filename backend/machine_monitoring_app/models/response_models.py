@@ -719,7 +719,7 @@ class FactorySchema_new(BaseModel):
 
 class new_Parameter(BaseModel):
     actual_parameter_name: str
-    display_name: str
+    display_name: Optional[str] = None
     internal_parameter_name: str
     # Pressure machines with no sensor rows yet can legitimately have null timestamps.
     latest_update_time: Optional[Union[int, str]] = None
@@ -732,6 +732,12 @@ class new_Parameter(BaseModel):
     parameter_type: Optional[str] = None
     unit_name: Optional[str] = None
     unit_short_name: Optional[str] = None
+    is_pressure_machine: Optional[bool] = None
+    is_vibration_machine: Optional[bool] = None
+    port_name: Optional[str] = None
+    signal_name: Optional[str] = None
+    source_machine_name: Optional[str] = None
+
 
 class new_MachineCount(BaseModel):
     OK: int
@@ -745,6 +751,14 @@ class new_Machine(BaseModel):
     machine_state: str
     count: new_MachineCount
     parameters: List[new_Parameter]
+    is_pressure_machine: Optional[bool] = None
+    is_combined_air_honing: Optional[bool] = None
+    is_vibration_machine: Optional[bool] = None
+    is_combined_vibration: Optional[bool] = None
+    ports: Optional[List[str]] = None
+    warning_limit: Optional[float] = None
+    critical_limit: Optional[float] = None
+    line_name: Optional[str] = None
 
 
 class new_LineCount(BaseModel):

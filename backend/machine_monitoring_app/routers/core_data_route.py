@@ -72,6 +72,15 @@ from machine_monitoring_app.database.crud_operations import get_current_machine_
     clear_pressure_log_file_baseline, get_pressure_machine_timeline_by_log_files, \
     update_pressure_machine_limits
 
+from machine_monitoring_app.database.vibration_operations import (
+    parse_vibration_date_param,
+    get_vibration_log_file_listing,
+    update_vibration_log_file_baseline,
+    clear_vibration_log_file_baseline,
+    get_vibration_machine_timeline_by_log_files,
+    update_vibration_machine_limits,
+)
+
 from machine_monitoring_app.database import TIMESCALEDB_URL
 from machine_monitoring_app.exception_handling.custom_exceptions import NoParameterGroupError, GetParamGroupDBError, \
     GetAllParameterDBError, GetMachineTimelineError
@@ -1980,6 +1989,140 @@ async def read_pressure_machine_air_pressure_log_files(
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error))
     except Exception as error:
+        if "deadlock detected" in str(error).lower():
+            try:
+                time.sleep(0.05)
+                parsed_log_file_ids = [
+                    int(item.strip()) for item in str(logFileIds).split(',') if item and item.strip()
+                ]
+                return get_pressure_machine_timeline_by_log_files(
+                    machineName,
+                    parsed_log_file_ids,
+                    max_points=maxPoints,
+                    include_baseline=includeBaseline,
+                )
+            except Exception as retry_error:
+                error = retry_error
         LOGGER.error(f"Error fetching pressure comparison graph for {machineName}: {error}")
         raise HTTPException(status_code=500, detail=f"Failed to retrieve pressure comparison data: {str(error)}")
+
+
+@ROUTER.get("/vibration/machines/{machineName}/log-files")
+async def read_vibration_machine_log_files(
+    machineName: str,
+    startDate: Optional[str] = Query(
+        None,
+        description="Start date filter for vibration_machine_logs.program_file_time in YYYY-MM-DD format.",
+    ),
+    endDate: Optional[str] = Query(
+        None,
+        description="End date filter for vibration_machine_logs.program_file_time in YYYY-MM-DD format.",
+    ),
+    port: Optional[str] = Query(
+        None,
+        description="Port used for latest param values / cycle duration from vibration_data.",
+    ),
+):
+    try:
+        start_date = parse_vibration_date_param(startDate, "startDate")
+        end_date = parse_vibration_date_param(endDate, "endDate")
+        if start_date and end_date and start_date > end_date:
+            raise HTTPException(status_code=400, detail="Start date cannot be greater than end date")
+        return get_vibration_log_file_listing(
+            machineName,
+            start_date=start_date,
+            end_date=end_date,
+            port=port,
+        )
+    except HTTPException:
+        raise
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error fetching vibration log files for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve vibration log files: {str(error)}")
+
+
+@ROUTER.put("/vibration/machines/{machineName}/limits")
+async def put_vibration_machine_limits(
+    machineName: str,
+    warningLimit: Optional[float] = Query(None, description="Warning limit from vibration_machines.warning"),
+    criticalLimit: Optional[float] = Query(None, description="Critical limit from vibration_machines.critical"),
+):
+    if warningLimit is None and criticalLimit is None:
+        raise HTTPException(status_code=400, detail="Provide warningLimit and/or criticalLimit")
+    try:
+        return update_vibration_machine_limits(
+            machineName,
+            warning_limit=warningLimit,
+            critical_limit=criticalLimit,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error updating vibration limits for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to update vibration limits: {str(error)}")
+
+
+@ROUTER.put("/vibration/machines/{machineName}/baseline-log-file")
+async def put_vibration_machine_baseline_log_file(
+    machineName: str,
+    logFileId: int = Query(..., description="vibration_machine_logs.id to mark as baseline"),
+):
+    try:
+        return update_vibration_log_file_baseline(machineName, logFileId)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error updating vibration baseline for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to update vibration baseline: {str(error)}")
+
+
+@ROUTER.delete("/vibration/machines/{machineName}/baseline-log-file")
+async def delete_vibration_machine_baseline_log_file(machineName: str):
+    try:
+        return clear_vibration_log_file_baseline(machineName)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error clearing vibration baseline for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to clear vibration baseline: {str(error)}")
+
+
+@ROUTER.get("/vibration/machines/{machineName}/comparison")
+async def read_vibration_machine_comparison(
+    machineName: str,
+    port: str = Query(..., description="Port / part name (e.g. MOTOR, BLOWER, JET PUMP)"),
+    parameter: str = Query(
+        "v_rms_x",
+        description="Y-axis metric from vibration_data",
+        example="v_rms_x",
+    ),
+    logFileIds: str = Query(
+        "",
+        description="Comma-separated vibration_machine_logs ids. Maximum 5.",
+    ),
+    includeBaseline: bool = Query(
+        True,
+        description="When true, include the currently configured baseline log file automatically.",
+    ),
+    maxPoints: int = Query(3000, ge=50, le=3000),
+):
+    try:
+        parsed_log_file_ids = [
+            int(item.strip()) for item in str(logFileIds).split(",") if item and item.strip()
+        ]
+        return get_vibration_machine_timeline_by_log_files(
+            machineName,
+            port=port,
+            parameter=parameter,
+            log_file_ids=parsed_log_file_ids,
+            max_points=maxPoints,
+            include_baseline=includeBaseline,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+    except Exception as error:
+        LOGGER.error(f"Error fetching vibration comparison graph for {machineName}: {error}")
+        raise HTTPException(status_code=500, detail=f"Failed to retrieve vibration comparison data: {str(error)}")
 

@@ -36,16 +36,20 @@ const navigationHistoryStore = useNavigationHistoryStore();
 const isMachineLevelSamplingPage = computed(() => (
   String(route.path || '').includes('machine-level-sampling')
   || String(route.path || '').includes('air-pressure-sampling')
+  || String(route.path || '').includes('vibration-sampling')
   || String(route.name || '').toLowerCase().includes('machine level sampling')
   || String(route.name || '').toLowerCase().includes('air pressure sampling')
+  || String(route.name || '').toLowerCase().includes('vibration sampling')
 ));
 
-/** Layout back only for air-pressure / honing sampling — not other machines */
+/** Layout back / hide footer for air-pressure and vibration sampling */
 const isPressureSamplingPage = computed(() => (
   isMachineLevelSamplingPage.value && (
     !!samplingStore.isPressureContext
     || String(route.path || '').includes('air-pressure-sampling')
+    || String(route.path || '').includes('vibration-sampling')
     || String(route.name || '').toLowerCase().includes('air pressure sampling')
+    || String(route.name || '').toLowerCase().includes('vibration sampling')
   )
 ));
 

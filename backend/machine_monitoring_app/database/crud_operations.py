@@ -121,9 +121,11 @@ def _format_pressure_ist_datetime(dt):
 
 
 def _format_pressure_ist_datetime_seconds(dt):
-    """Format naive DB datetime as YYYY-MM-DD HH:MM:SS (no fractional seconds)."""
+    """Format DB datetime as YYYY-MM-DD HH:MM:SS in Asia/Kolkata wall clock."""
     if dt is None:
         return None
+    if getattr(dt, "tzinfo", None) is not None:
+        dt = dt.astimezone(PRESSURE_DB_TIMEZONE).replace(tzinfo=None)
     return dt.strftime('%Y-%m-%d %H:%M:%S')
 
 
@@ -362,33 +364,6 @@ def _execute_raw_sql(query, params=None):
         cursor.close()
 
 
-def _ensure_pressure_runtime_columns(cursor):
-    """
-    Ensure runtime columns exist (no migration script). Safe no-ops if already present.
-    - pressure_log_file.rmse
-    - pressure_log_file.status  (per-run RMSE vs limits)
-    - pressure_monitoring_machine.status  (machine/signal status)
-    """
-    cursor.execute(
-        f"""
-        ALTER TABLE {schema_name}.pressure_log_file
-        ADD COLUMN IF NOT EXISTS rmse DOUBLE PRECISION
-        """
-    )
-    cursor.execute(
-        f"""
-        ALTER TABLE {schema_name}.pressure_log_file
-        ADD COLUMN IF NOT EXISTS status VARCHAR(20)
-        """
-    )
-    cursor.execute(
-        f"""
-        ALTER TABLE {schema_name}.pressure_monitoring_machine
-        ADD COLUMN IF NOT EXISTS status VARCHAR(20)
-        """
-    )
-
-
 def _get_pressure_rmse_status(rmse, warning_limit, critical_limit):
     """
     Run / machine status from RMSE vs limits on pressure_monitoring_machine.
@@ -623,14 +598,6 @@ def _refresh_pressure_machine_status(machine_id, warning_limit, critical_limit, 
 
 def _fetch_pressure_machine_rows():
     """Pressure signal machines with RMSE-based status from DB."""
-    connection = PONY_DATABASE.get_connection()
-    cursor = connection.cursor()
-    try:
-        _ensure_pressure_runtime_columns(cursor)
-        connection.commit()
-    finally:
-        cursor.close()
-
     rows = []
     for machine in select(m for m in PressureMonitoringMachine).order_by(PressureMonitoringMachine.id):
         latest = _latest_pressure_log_file(machine.id)
@@ -898,31 +865,51 @@ def _get_pressure_machine_meta(machine_name):
 
 def _fetch_pressure_log_files(machine_id, start_date=None, end_date=None):
     query = select(lf for lf in PressureLogFile if lf.machine.id == int(machine_id))
+    # Filter in Python with timezone-normalized bounds to avoid naive/aware compare errors
+    # on timestamptz columns (same class of bug as vibration_data.timestamp).
+    start_dt = None
+    end_dt = None
     if start_date is not None:
-        start_dt = datetime.combine(start_date, datetime.min.time())
-        query = query.filter(lambda lf: lf.time_stamp >= start_dt)
+        start_dt = PRESSURE_DB_TIMEZONE.localize(datetime.combine(start_date, datetime.min.time()))
     if end_date is not None:
-        end_dt = datetime.combine(end_date + timedelta(days=1), datetime.min.time())
-        query = query.filter(lambda lf: lf.time_stamp < end_dt)
+        end_dt = PRESSURE_DB_TIMEZONE.localize(
+            datetime.combine(end_date + timedelta(days=1), datetime.min.time())
+        )
 
     query = query.order_by(desc(PressureLogFile.time_stamp), desc(PressureLogFile.id))
-    return [
-        (
-            log_file.id,
-            log_file.file_name,
-            log_file.time_stamp,
-            bool(log_file.baseline),
-            log_file.mean_pressure,
-            log_file.peak_pressure,
-            log_file.start_time,
-            log_file.end_time,
-            log_file.cycle_duration_seconds,
-            log_file.pressure_ripple,
-            log_file.rmse,
-            log_file.status,
+    rows = []
+    for log_file in query:
+        ts = log_file.time_stamp
+        if ts is not None:
+            if getattr(ts, "tzinfo", None) is None:
+                ts_cmp = PRESSURE_DB_TIMEZONE.localize(ts)
+            else:
+                ts_cmp = ts.astimezone(PRESSURE_DB_TIMEZONE)
+            if start_dt is not None and ts_cmp < start_dt:
+                continue
+            if end_dt is not None and ts_cmp >= end_dt:
+                continue
+        elif start_dt is not None or end_dt is not None:
+            # No timestamp — exclude when a date filter is active
+            continue
+
+        rows.append(
+            (
+                log_file.id,
+                log_file.file_name,
+                log_file.time_stamp,
+                bool(log_file.baseline),
+                log_file.mean_pressure,
+                log_file.peak_pressure,
+                log_file.start_time,
+                log_file.end_time,
+                log_file.cycle_duration_seconds,
+                log_file.pressure_ripple,
+                log_file.rmse,
+                log_file.status,
+            )
         )
-        for log_file in query
-    ]
+    return rows
 
 
 def _fetch_pressure_points_for_log_file(machine_id, log_file_id, max_points):
@@ -1010,14 +997,6 @@ def _fetch_pressure_points_for_log_file(machine_id, log_file_id, max_points):
 @db_session(optimistic=False)
 def get_pressure_log_file_listing(machine_name, start_date=None, end_date=None):
     machine_id, machine_name_db, warning_limit, critical_limit = _get_pressure_machine_meta(machine_name)
-    connection = PONY_DATABASE.get_connection()
-    cursor = connection.cursor()
-    try:
-        _ensure_pressure_runtime_columns(cursor)
-        connection.commit()
-    finally:
-        cursor.close()
-
     log_rows = _fetch_pressure_log_files(machine_id, start_date=start_date, end_date=end_date)
 
     baseline_log_file_id = None
@@ -1549,6 +1528,8 @@ def get_real_time_parameters_data():
 
         if group_name != PRESSURE_PARAMETER_GROUP:
             _merge_pressure_into_group_json(group_json)
+            from machine_monitoring_app.database.vibration_operations import _merge_vibration_into_group_json
+            _merge_vibration_into_group_json(group_json)
 
         group_info = {"item_name": group_name,
                       "item_state": group_json['group_state']}
@@ -1564,6 +1545,16 @@ def get_real_time_parameters_data():
             'item_state': pressure_group['group_state'],
         })
         json_list.append(pressure_group)
+        groups_overview = sorted(groups_overview, key=lambda group: group['item_name'])
+
+    from machine_monitoring_app.database.vibration_operations import get_vibration_monitoring_group_details
+    vibration_group = get_vibration_monitoring_group_details()
+    if vibration_group['group_details']:
+        groups_overview.append({
+            'item_name': vibration_group['group_name'],
+            'item_state': vibration_group['group_state'],
+        })
+        json_list.append(vibration_group)
         groups_overview = sorted(groups_overview, key=lambda group: group['item_name'])
 
     response = {"group_names": groups_overview,
@@ -1821,6 +1812,24 @@ def get_latest_snapshot_for_parameter_group_test(parameter_group_name: str = "AP
                 "requested_group_details": get_pressure_monitoring_group_details(),
             }
             return response
+
+        from machine_monitoring_app.database.vibration_operations import (
+            VIBRATION_PARAMETER_GROUP,
+            get_vibration_monitoring_group_details,
+        )
+        if parameter_group_name.upper() == VIBRATION_PARAMETER_GROUP:
+            group_statuses = get_parameter_group_statuses()
+            if not any(item['item_name'] == VIBRATION_PARAMETER_GROUP for item in group_statuses):
+                vib = get_vibration_monitoring_group_details()
+                group_statuses.append({
+                    'item_name': vib['group_name'],
+                    'item_state': vib['group_state'],
+                })
+                group_statuses = sorted(group_statuses, key=lambda group: group['item_name'])
+            return {
+                "group_names": group_statuses,
+                "requested_group_details": get_vibration_monitoring_group_details(),
+            }
 
         response = {"group_names": get_parameter_group_statuses(),
                     "requested_group_details": get_machine_states_2(parameter_group_name)}
@@ -3024,6 +3033,8 @@ def get_machine_states_2(group_name):
 
     if group_name != PRESSURE_PARAMETER_GROUP:
         _merge_pressure_into_group_json(group_json)
+        from machine_monitoring_app.database.vibration_operations import _merge_vibration_into_group_json
+        _merge_vibration_into_group_json(group_json)
 
     return group_json
 
@@ -7559,6 +7570,8 @@ def get_real_time_parameters_data_mtlinki_new_layout():
         json_list.append(location_json)
 
     json_list, _ = _merge_pressure_machines_into_lines(json_list)
+    from machine_monitoring_app.database.vibration_operations import _merge_vibration_machines_into_lines
+    json_list, _ = _merge_vibration_machines_into_lines(json_list)
     json_list = _attach_journal_grinders_to_crank(json_list)
 
     response = {"lines": json_list}

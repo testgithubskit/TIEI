@@ -26,6 +26,7 @@ import 'toastify-js/src/toastify.css';
 
 import { useFactoryPollOverviewStore } from '@/stores/FactoryPollGridStore'; 
 import { useMachineSamplingWithLimitsStore, pressureTimeToEpoch } from '@/stores/MachineSamplingWithLimitsStore'; 
+import { useVibrationSamplingStore } from '@/stores/VibrationSamplingStore';
 import { useNavigationHistoryStore } from '@/stores/navigationHistoryStore';
 
 import { useRouter } from 'vue-router';
@@ -39,6 +40,7 @@ const router = useRouter();
 const route = useRoute();
 const factoryPollOverviewGridStore = useFactoryPollOverviewStore();
 const machineSamplingWithLimitsStore = useMachineSamplingWithLimitsStore();
+const vibrationSamplingStore = useVibrationSamplingStore();
 const navigationHistoryStore = useNavigationHistoryStore();
 const DatabaseName = useDatabaseName();
 const isPageLoading = ref(true);
@@ -352,6 +354,32 @@ const handleMachineParameterClick = async (clickedParameter) => {
     || clickedParameter.machineName === '2nd Rough'
     || clickedParameter.machineName === '4th Finish'
   );
+
+  const isVibrationClick = (
+    clickedParameter.is_vibration_machine === true
+    || selectedGroup === 'VIBRATION'
+    || clickedParameter.parameter_group === 'VIBRATION'
+    || !!clickedParameter.port_name
+    || ['T_C_OP200', 'T_H_OP280'].includes(clickedParameter.machineName)
+  );
+
+  if (isVibrationClick) {
+    const portName = clickedParameter.port_name
+      || clickedParameter.signal_name
+      || clickedParameter.displayName
+      || '';
+    vibrationSamplingStore.setContext({
+      machine: clickedParameter.machineName,
+      port: portName,
+      lineName: '',
+      selectedParameter: 'v_rms_x',
+      warningLimit: clickedParameter.warning_limit ?? null,
+      criticalLimit: clickedParameter.critical_limit ?? null,
+    });
+    navigationHistoryStore.addToHistory(router.currentRoute.value);
+    router.push('/vibration-sampling');
+    return;
+  }
 
   const machineDetails = {
     machine: clickedParameter.machineName,

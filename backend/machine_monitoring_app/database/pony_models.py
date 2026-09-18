@@ -590,6 +590,7 @@ class VibrationMachineLog(PONY_DATABASE.Entity):
     id = PrimaryKey(int, auto=True)
     program_file_id = Optional(int)
     program_file_time = Optional(datetime)
+    baseline = Required(bool, default=False)
     machine = Optional(VibrationMachine, column="machine_id")
 
 

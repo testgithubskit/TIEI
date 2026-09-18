@@ -84,8 +84,10 @@ const handleMachineParameterClick = (clickedParameter) => {
         :machineName="machine.machine_name"
         :machineState="machine.machine_state"
         :parameters="machine.parameters"
+        :ports="machine.ports || []"
         :isPressureMachine="machine.is_pressure_machine === true || machine.is_combined_air_honing === true"
         :isCombinedAirHoning="machine.is_combined_air_honing === true"
+        :isCombinedVibration="machine.is_combined_vibration === true || machine.is_vibration_machine === true"
         @machine-parameter-clicked="handleMachineParameterClick"
       />
     </div>

@@ -38,6 +38,9 @@ backendApi.interceptors.request.use(
 backendApi.interceptors.response.use(
   (response) => response,
   (error) => {
+    if (error.code === 'ERR_CANCELED' || error.name === 'CanceledError' || error.name === 'AbortError') {
+      return Promise.reject(error);
+    }
     if (error.message === 'Network Error') {
       console.error('Network error occurred. Please check your connection.');
     } else if (error.response) {
